@@ -1,7 +1,36 @@
-/** 全局样式：Tailwind 三层指令 + 产品基础排版。 */
+/** 全局样式：设计令牌（:root 变量）、Tailwind 三层指令与全局基础。 */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * 设计令牌：全部颜色集中在此定义，tailwind.config.js 按同名映射，
+ * 调整主题只需要改这里的变量值。
+ */
+:root {
+  --color-paper: #f5f5f5;      /* 页面底色 / 日志面板 / 灰卡片 */
+  --color-ink: #171717;        /* 主文本 / 主按钮 */
+  --color-line: #e5e5e5;       /* 描边 */
+  --color-brand: #4e7cff;      /* 品牌蓝（焦点描边） */
+  --color-branddeep: #5f78ff;  /* 深品牌蓝（强调） */
+  --color-link: #3275e8;       /* 链接蓝 */
+  --color-ok: #20c878;         /* 成功 */
+  --color-okdeep: #20a760;     /* 成功文本 */
+  --color-warn: #ffad17;       /* 警示橙 */
+  --color-warndeep: #c68700;   /* 警示文本 */
+  --color-danger: #ff4d4f;     /* 危险 */
+  --color-dangerdeep: #d6473f; /* 危险文本 */
+  --color-claw: #ff3b30;       /* 品牌 Claw 红字 */
+  --color-muted: #747474;      /* 次要文本 */
+  --color-faint: #9a9a9a;      /* 弱文本 */
+  --color-tint: #eef4ff;       /* 浅蓝信息底（首页横幅 / 订阅卡片） */
+  --color-surface: #f2f2f2;    /* BOT 页灰色工作区 */
+  --color-field: #f0f0f0;      /* 输入框底色 */
+  --color-hot: #ff2633;        /* 订阅套餐推荐红 */
+  --color-okbg: #e5f8ed;       /* 运行中状态胶囊底 */
+  --color-warnbg: #fff0c8;     /* 启动中状态胶囊底 */
+  --color-dangerbg: #ffe5e3;   /* 停止/失败状态胶囊底 */
+}
 
 html,
 body,
@@ -13,8 +42,8 @@ body,
 
 body {
   overflow: hidden;
-  background: #f5f5f5;
-  color: #171717;
+  background: var(--color-paper);
+  color: var(--color-ink);
   @apply font-sans antialiased;
   user-select: none;
 }
@@ -35,4 +64,11 @@ textarea {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 加载页滑动横线 */
+@keyframes loading-slide {
+  0% { transform: translateX(-90px); }
+  50% { transform: translateX(70px); }
+  100% { transform: translateX(190px); }
 }

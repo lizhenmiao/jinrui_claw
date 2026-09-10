@@ -32,7 +32,7 @@ export default function ModelPage({ context }) {
         <h1 className="mb-5 text-[23px] font-medium text-[#151515]">配置你的大模型，激活 AI 助手能力</h1>
 
         {subscriptionModelMode && subscriptionInfo && (
-          <div className="mx-auto mb-[18px] w-full max-w-[560px] rounded-[10px] bg-[#eef4ff] p-[18px_20px] text-left text-[#444]">
+          <div className="mx-auto mb-[18px] w-full max-w-[560px] rounded-[10px] bg-tint p-[18px_20px] text-left text-[#444]">
             <div className="mb-2.5 flex items-center justify-between gap-3">
               <strong className="text-base text-[#222]">订阅模型</strong>
               <span className="whitespace-nowrap rounded-[14px] bg-[#dff8e9] px-2.5 py-1 text-[11px] text-okdeep">Coding Plan 已生效</span>
@@ -74,7 +74,7 @@ export default function ModelPage({ context }) {
                   <input
                     id={field.id}
                     type={field.type || "text"}
-                    className="h-9 rounded-md bg-[#f0f0f0] px-3 text-sm text-[#555] outline-none focus:bg-white focus:ring-1 focus:ring-brand"
+                    className="h-9 rounded-md bg-field px-3 text-sm text-[#555] outline-none focus:bg-white focus:ring-1 focus:ring-brand"
                     placeholder={field.placeholder}
                     value={field.value}
                     onChange={(event) => setManualModel((prev) => ({ ...prev, [field.key]: event.target.value.trim() }))}

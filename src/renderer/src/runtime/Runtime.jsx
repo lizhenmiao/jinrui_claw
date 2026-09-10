@@ -9,7 +9,7 @@ import { Button, useToast } from "../components/ui.jsx";
 
 /** 网关状态徽标：运行中（绿）/ 启动中·停止中（黄）/ 失败·已停止（红）。 */
 function GatewayBadge({ state }) {
-  const tone = state === "running" ? "bg-[#e5f8ed] text-okdeep" : state === "starting" ? "bg-[#fff0c8] text-[#c68700]" : "bg-[#ffe5e3] text-[#d6473f]";
+  const tone = state === "running" ? "bg-okbg text-okdeep" : state === "starting" ? "bg-warnbg text-warndeep" : "bg-dangerbg text-dangerdeep";
   const label = { running: "运行中", starting: "启动中", stopping: "停止中", failed: "启动失败", stopped: "已停止" }[state] || "已停止";
   return (
     <span className={`inline-flex h-[30px] min-w-[76px] items-center justify-center rounded-full px-[17px] text-[13px] font-medium ${tone}`}>
@@ -205,7 +205,7 @@ export default function Runtime() {
 
       <div className="mx-auto w-full max-w-[760px]">
         <div className="mb-3 text-lg font-semibold text-[#222]">运行日志</div>
-        <div className="h-[162px] overflow-auto whitespace-pre-wrap rounded-[11px] bg-[#f5f5f5] p-[18px_24px] font-mono text-xs leading-[1.65] text-[#6d6d6d]">
+        <div className="h-[162px] overflow-auto whitespace-pre-wrap rounded-[11px] bg-paper p-[18px_24px] font-mono text-xs leading-[1.65] text-[#6d6d6d]">
           {logText}
         </div>
         <div className="mt-4 flex items-center justify-end gap-2.5">

@@ -67,10 +67,10 @@ export default function SubscriptionPage({ context }) {
           {plans.map((plan, index) => (
             <article
               key={`${plan.name}-${index}`}
-              className={`relative flex min-h-[166px] flex-col gap-2 rounded-[9px] bg-white text-left shadow-[0_3px_15px_rgba(0,0,0,0.04)] ${plan.popular ? "border-2 border-[#ff2633] px-[18px] pb-[15px] pt-[30px]" : "px-5 pb-[17px] pt-8"}`}
+              className={`relative flex min-h-[166px] flex-col gap-2 rounded-[9px] bg-white text-left shadow-[0_3px_15px_rgba(0,0,0,0.04)] ${plan.popular ? "border-2 border-hot px-[18px] pb-[15px] pt-[30px]" : "px-5 pb-[17px] pt-8"}`}
             >
               {plan.popular && (
-                <label className="absolute -left-0.5 -right-0.5 -top-0.5 rounded-t-[9px] bg-[#ff2633] py-0.5 text-center text-[10px] leading-6 text-white">
+                <label className="absolute -left-0.5 -right-0.5 -top-0.5 rounded-t-[9px] bg-hot py-0.5 text-center text-[10px] leading-6 text-white">
                   最受欢迎
                 </label>
               )}
@@ -85,7 +85,7 @@ export default function SubscriptionPage({ context }) {
         </div>
 
         <div className="mt-3 block w-full min-h-7 text-xs leading-[1.4] text-okdeep">{statusText}</div>
-        <div className="mx-auto mt-2.5 inline-block rounded-[10px] border border-[#e4e4e4] bg-[#f7f7f7] px-[14px] py-[7px]">
+        <div className="mx-auto mt-2.5 inline-block rounded-[10px] border border-[#e4e4e4] bg-paper px-[14px] py-[7px]">
           <span className="whitespace-nowrap text-[10px] leading-[1.5] text-[#999]">
             定价与权益说明详见 <a href="#" onClick={(event) => event.preventDefault()} className="text-link">产品文档</a>
           </span>

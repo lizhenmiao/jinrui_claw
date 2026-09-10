@@ -39,10 +39,11 @@ function spawnChild(command, args, env) {
 }
 
 try {
-  spawnChild(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build:renderer"], {});
-  spawnChild("node", ["node_modules/vite/bin/vite.js"], { VITE_DEV_SERVER_URL: DEV_SERVER_URL });
+  const vite = spawnChild(process.execPath, ["node_modules/vite/bin/vite.js"], { VITE_DEV_SERVER_URL: DEV_SERVER_URL });
   await waitForServer(DEV_SERVER_URL);
-  spawnChild(process.execPath, ["node_modules/electron/dist/electron.exe", "."], { VITE_DEV_SERVER_URL: DEV_SERVER_URL });
+  // electron 包在 Node 侧的默认导出即本平台可执行文件路径。
+  const electronBinary = (await import("electron")).default;
+  spawnChild(electronBinary, ["."], { VITE_DEV_SERVER_URL: DEV_SERVER_URL });
 } catch (error) {
   console.error(`[dev] ${error.message}`);
 } finally {

@@ -37,9 +37,8 @@ export default function App() {
         </div>
         <div className="mt-1 text-[11px] text-[#888]">便携式 U 盘小龙虾智能协作伙伴</div>
         <div className="mt-7 h-[2px] w-[190px] overflow-hidden bg-[#e6e6e6]">
-          <div className="h-full w-1/2 animate-[loadingSlide_1.2s_ease-in-out_infinite] bg-[#333]" />
+          <div className="h-full w-1/2 animate-[loading-slide_1.2s_ease-in-out_infinite] bg-[#333]" />
         </div>
-        <style>{`@keyframes loadingSlide{0%{transform:translateX(-90px)}50%{transform:translateX(70px)}100%{transform:translateX(190px)}}`}</style>
       </div>
     );
   }

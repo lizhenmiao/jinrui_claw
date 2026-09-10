@@ -21,7 +21,7 @@ export default function HomePage({ context }) {
         </div>
         <h1 className="mb-[26px] text-[23px] font-medium text-[#151515]">7*24小时在线的专属便携式智能伙伴</h1>
 
-        <div className="mx-auto mb-[34px] flex min-h-[76px] w-full items-center gap-[22px] rounded-[10px] bg-[#eef4ff] px-[26px]">
+        <div className="mx-auto mb-[34px] flex min-h-[76px] w-full items-center gap-[22px] rounded-[10px] bg-tint px-[26px]">
           <img src="assets/banner.png" alt="小龙虾" className="h-[112px] w-[150px] self-end object-contain" />
           <div className="flex flex-col gap-[9px] text-left text-[13px] text-[#5d5d5d]">
             <b className="font-medium text-[#444]">配置 ZgyClaw</b>

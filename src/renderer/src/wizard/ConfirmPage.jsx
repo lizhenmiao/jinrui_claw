@@ -21,7 +21,7 @@ export default function ConfirmPage({ context }) {
   return (
     <div className="flex flex-1 flex-col items-center overflow-auto pt-[72px]">
       <h1 className="mb-[34px] text-lg font-medium text-[#151515]">请确认以下配置，点击完成后会保存到 U 盘并启动。</h1>
-      <div className="w-[405px] rounded-[10px] bg-[#f6f6f6] px-[42px] py-[22px]">
+      <div className="w-[405px] rounded-[10px] bg-paper px-[42px] py-[22px]">
         {[
           { label: "AI 模型", value: modelText },
           { label: "聊天工具", value: TOOL_NAMES[selectedTool] || "暂不接入" },

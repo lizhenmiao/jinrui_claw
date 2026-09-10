@@ -24,14 +24,14 @@ export default function BotPage({ context }) {
           <button
             key={tool.id}
             type="button"
-            className={`flex h-[58px] w-[74px] flex-col items-center justify-center rounded-[10px] px-[5px] py-2 ${selectedTool === tool.id ? "bg-[#e8e8e8]" : "hover:bg-[#f2f2f2]"}`}
+            className={`flex h-[58px] w-[74px] flex-col items-center justify-center rounded-[10px] px-[5px] py-2 ${selectedTool === tool.id ? "bg-[#e8e8e8]" : "hover:bg-surface"}`}
             onClick={() => setSelectedTool(tool.id)}
           >
             <img src={`assets/${tool.icon}`} alt="" className="h-11 w-11 object-contain" />
           </button>
         ))}
       </aside>
-      <main className="mx-0 mt-6 min-w-0 overflow-hidden border border-[rgba(0,0,0,0.10)] bg-[#f2f2f2]">
+      <main className="mx-0 mt-6 min-w-0 overflow-hidden border border-[rgba(0,0,0,0.10)] bg-surface">
         <div className="h-full overflow-y-auto px-8 py-7">
           <ChannelPanel toolId={selectedTool} toast={toast} plain />
         </div>
