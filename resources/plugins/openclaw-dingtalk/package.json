@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-dingtalk",
+  "version": "0.1.0",
+  "description": "Small DingTalk webhook sender plugin for OpenClaw Portable.",
+  "type": "module",
+  "private": true,
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "runtimeExtensions": [
+      "./index.js"
+    ]
+  }
+}

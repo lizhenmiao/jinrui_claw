@@ -1,0 +1,29 @@
+{
+  "id": "openclaw-dingtalk-channel",
+  "name": "DingTalk Channel",
+  "description": "Receive DingTalk robot messages via Stream mode and reply through OpenClaw.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "channels": [
+    "openclaw-dingtalk-channel"
+  ],
+  "channelConfigs": {
+    "openclaw-dingtalk-channel": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "label": "DingTalk Channel",
+      "description": "DingTalk Stream robot conversation channel."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "skills": [
+    "./skills"
+  ]
+}

@@ -1,0 +1,24 @@
+﻿{
+    "id":  "openclaw-dingtalk",
+    "name":  "DingTalk",
+    "description":  "Send text or markdown messages to the configured DingTalk group robot. Default credentials are read from data/.openclaw/dingtalk.json.",
+    "activation":  {
+                       "onStartup":  true
+                   },
+    "skills":  [
+                   "./skills"
+               ],
+    "configSchema":  {
+                         "type":  "object",
+                         "additionalProperties":  true,
+                         "properties":  {
+
+                                        }
+                     },
+    "version":  "0.1.1",
+    "contracts":  {
+                      "tools":  [
+                                    "dingtalk_send"
+                                ]
+                  }
+}

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+release/
+dist/
+dist-electron/
+
+# Runtime data (USB data directory created beside the executable during dev runs)
+data/
+
+# Authorization artifacts written beside the executable during dev/binding
+license.dat
+*.flag
+child-pids.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment secrets
+.env
+.env.local

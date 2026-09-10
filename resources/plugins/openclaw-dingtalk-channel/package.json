@@ -1,0 +1,10 @@
+{
+  "name": "openclaw-dingtalk-channel",
+  "version": "0.1.0",
+  "description": "OpenClaw DingTalk Stream channel plugin for robot conversations.",
+  "type": "module",
+  "main": "index.js",
+  "dependencies": {
+    "dingtalk-stream": "2.1.5"
+  }
+}

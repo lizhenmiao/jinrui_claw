@@ -1,0 +1,81 @@
+{
+  "product": {
+    "name": "小龙虾U盘版",
+    "displayName": "小龙虾 U盘版",
+    "version": "3.0.0",
+    "channel": "product-ui",
+    "release": "stable"
+  },
+  "ports": {
+    "gateway": 18789,
+    "oauthCallback": 18790
+  },
+  "backend": {
+    "url": "http://111.6.204.34:6005",
+    "licenseKey": "XLX-DEMO-0001",
+    "channel": "stable",
+    "reportOnly": true
+  },
+  "oauth": {
+    "issuer": "http://192.168.0.73:8080",
+    "authorizationOrigin": "http://192.168.0.73:5173",
+    "clientId": "jr_client_5730df3e-901",
+    "clientSecret": "jr_secret_WdjZdNVOwIN4DljdwfTqCswiwiEAFUfwp6-dINX2DG8",
+    "clientType": "confidential",
+    "redirectUri": "http://127.0.0.1:18790/api/auth/callback",
+    "scopes": "openid profile subscription:read wallet:read usage:read models:read inference"
+  },
+  "models": {
+    "typeDefaults": {
+      "openai": {
+        "providerId": "openai",
+        "label": "open AI",
+        "model": "gpt-4o-mini",
+        "baseUrl": "https://api.openai.com/v1",
+        "api": "openai-completions"
+      },
+      "anthropic": {
+        "providerId": "anthropic",
+        "label": "Anthropic",
+        "model": "claude-3-5-sonnet-latest",
+        "baseUrl": "https://api.anthropic.com/v1",
+        "api": "anthropic-messages"
+      }
+    },
+    "presets": [
+      { "id": "deepseek", "name": "DeepSeek 国内 便宜", "desc": "deepseek-v4-flash，超低价格", "model": "deepseek-v4-flash", "baseUrl": "https://api.deepseek.com/v1", "dot": "c-blue", "tag": "推荐" },
+      { "id": "minimax", "name": "MiniMax 推荐 国内", "desc": "MiniMax-Text-01，速度快", "model": "MiniMax-Text-01", "baseUrl": "https://api.minimax.chat/v1", "dot": "c-green", "tag": "国内" },
+      { "id": "kimi", "name": "Kimi（月之暗面）国内 快", "desc": "moonshot-v1-auto", "model": "moonshot-v1-auto", "baseUrl": "https://api.moonshot.cn/v1", "dot": "c-purple", "tag": "国内" },
+      { "id": "zai", "name": "智谱 GLM 国内 有免费", "desc": "内置 zai provider，免费额度", "model": "glm-5", "baseUrl": "", "dot": "c-purple", "tag": "国内" },
+      { "id": "qwen", "name": "通义千问 国内 有免费", "desc": "qwen-turbo，阿里云出品", "model": "qwen-turbo", "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "dot": "c-yellow", "tag": "国内" },
+      { "id": "doubao", "name": "豆包（字节）国内 快", "desc": "doubao-1.5-pro", "model": "doubao-1.5-pro-32k", "baseUrl": "https://ark.cn-beijing.volces.com/api/v3", "dot": "c-orange", "tag": "国内" },
+      { "id": "siliconflow", "name": "硅基流动 国内 便宜", "desc": "多模型聚合，价格低", "model": "Qwen/Qwen2.5-72B-Instruct", "baseUrl": "https://api.siliconflow.cn/v1", "dot": "c-green", "tag": "国内" },
+      { "id": "openai", "name": "OpenAI 强", "desc": "GPT-4o，需要增强或中转", "model": "gpt-4o", "baseUrl": "https://api.openai.com/v1", "dot": "c-green" },
+      { "id": "xiaomi", "name": "小米 MIMO（按量）国内 强", "desc": "按量付费 API，sk- 开头 Key", "model": "mimo-v2.5-pro", "baseUrl": "https://api.xiaomimimo.com/v1", "dot": "c-orange", "tag": "国内" },
+      { "id": "xiaomi-coding", "name": "小米 MIMO（Token）国内 强", "desc": "Token Plan 订阅，tp- 开头 Key", "model": "mimo-v2.5-pro", "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1", "dot": "c-orange", "tag": "国内" },
+      { "id": "jinrui-deepseek", "name": "锦锐 deepseek 强", "desc": "后台模型，需填写 Key", "model": "deepseek-v4-flash", "baseUrl": "https://cloud.tejinrui.com/api/balance/v1", "dot": "c-blue", "tag": "推荐" },
+      { "id": "custom", "name": "自定义 兼容", "desc": "OpenAI 兼容 API", "model": "", "baseUrl": "", "dot": "c-purple" }
+    ],
+    "presetOptions": {
+      "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+      "minimax": ["MiniMax-Text-01", "abab7-chat-preview", "abab6.5s-chat"],
+      "kimi": ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+      "zai": ["glm-5", "glm-4-flash", "glm-4-plus", "glm-4-air"],
+      "qwen": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen2.5-72b-instruct"],
+      "doubao": ["doubao-1.5-pro-32k", "doubao-1.5-lite-32k", "doubao-pro-32k"],
+      "siliconflow": ["Qwen/Qwen2.5-72B-Instruct", "deepseek-ai/DeepSeek-V3", "meta-llama/Meta-Llama-3.1-70B-Instruct"],
+      "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
+      "xiaomi": ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5-flash"],
+      "xiaomi-coding": ["mimo-v2.5-pro", "mimo-v2.5-flash", "mimo-v2.5-pro-ultraspeed"],
+      "jinrui-deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"]
+    }
+  },
+  "subscription": {
+    "plansPageSuffix": "#plans",
+    "plans": [
+      { "name": "Lite plan", "price": "¥ 39.90", "period": "/ 月", "desc": "会员周期内容 ZgyClaw 持续可用", "popular": false },
+      { "name": "Lite plan", "price": "¥ 99.90", "period": "/ 月", "desc": "会员周期内容 ZgyClaw 持续可用", "popular": true },
+      { "name": "Lite plan", "price": "¥ 199.90", "period": "/ 月", "desc": "适合处理更多任务", "popular": false }
+    ]
+  }
+}
