@@ -1,18 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { buildChannelConfigSchema } from "../../app/node_modules/openclaw/dist/plugin-sdk/channel-config-schema.js";
-import { createTypingCallbacks } from "../../app/node_modules/openclaw/dist/plugin-sdk/channel-runtime.js";
 
-// This plugin lives outside app/node_modules. Resolve its SDK from the
+// This plugin lives outside the openclaw package. Resolve its SDK from the
 // portable module cache explicitly; a bare ESM import cannot see the sibling
-// app/node_modules directory after the USB bootstrap creates the junction.
+// node_modules directory.
 const moduleRoot = process.env.OPENCLAW_MODULES_DIR
   || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app/node_modules");
 const require = createRequire(import.meta.url);
 const dingtalkStreamPath = require.resolve("dingtalk-stream", { paths: [moduleRoot] });
 const { DWClient, EventAck, TOPIC_ROBOT } = require(dingtalkStreamPath);
+// openclaw 未导出 plugin-sdk 子路径，按包根定位文件；延迟到首次使用时加载，
+// 避免与网关自身的动态 import 并发触发 ERR_REQUIRE_ESM_RACE_CONDITION。
+let sdkCache = null;
+function loadSdk() {
+  if (sdkCache) return sdkCache;
+  const openclawDist = path.dirname(require.resolve("openclaw", { paths: [moduleRoot] }));
+  sdkCache = {
+    buildChannelConfigSchema: require(path.join(openclawDist, "plugin-sdk", "channel-config-schema.js")).buildChannelConfigSchema,
+    createTypingCallbacks: require(path.join(openclawDist, "plugin-sdk", "channel-runtime.js")).createTypingCallbacks,
+  };
+  return sdkCache;
+}
 
 const CHANNEL_ID = "openclaw-dingtalk-channel";
 const DEFAULT_ACCOUNT_ID = "default";
@@ -410,7 +420,14 @@ export default {
   id: CHANNEL_ID,
   name: "DingTalk Channel",
   description: "Receive DingTalk robot messages via Stream mode and reply through OpenClaw.",
-  configSchema: buildChannelConfigSchema(dingtalkChannelAccountSchema),
+  // 惰性求值：加载期 SDK 可能尚未就绪，此时退回宽松 schema，不阻塞插件加载。
+  get configSchema() {
+    try {
+      return loadSdk().buildChannelConfigSchema(dingtalkChannelAccountSchema);
+    } catch {
+      return dingtalkChannelAccountSchema;
+    }
+  },
   register(api) {
     api.registerChannel({ plugin: dingtalkChannelPlugin });
   },

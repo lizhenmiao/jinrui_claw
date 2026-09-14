@@ -1,19 +1,16 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Build output（仅限本仓库构建产物；注意排除下方插件自带 dist）
 out/
 release/
 dist/
 dist-electron/
+# 插件目录里的 dist 是随包运行的成品代码，不是构建产物，必须入库
+!resources/plugins/*/dist/
 
-# Runtime data (USB data directory created beside the executable during dev runs)
+# 运行时数据目录：授权文件、插件包、配置、日志全部集中在此（U 盘随包生成）
 data/
-
-# Authorization artifacts written beside the executable during dev/binding
-license.dat
-*.flag
-child-pids.json
 
 # Editor
 .vscode/
@@ -29,6 +26,12 @@ desktop.ini
 *.log
 npm-debug.log*
 
-# Environment secrets
+# 环境私密文件
 .env
 .env.local
+
+# 原型参考素材（本地比对用，不入库）
+.design-refs/
+
+# 本地联调覆盖（不随包分发，交付仍用 resources/app.config.json）
+app.config.json
