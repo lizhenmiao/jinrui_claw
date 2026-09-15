@@ -1,5 +1,5 @@
 /**
- * 应用入口：单实例锁、启动链（模块引导 → 授权校验 → 后台校验 → 窗口）、
+ * 应用入口：单实例锁、窗口先行的启动链（加载页即刻可见，模块引导/授权校验后台进行）、
  * 拔盘看护、退出清理与命令行授权工具。
  */
 const { app, BrowserWindow, ipcMain } = require("electron");
@@ -12,7 +12,6 @@ const license = require("./services/license");
 const processManager = require("./services/process-manager");
 const { checkBackendLicense, syncBackendModels } = require("./services/backend-client");
 const { readConfig, writeConfig } = require("./services/config-store");
-const { cleanupStaleProcesses } = require("./services/process-manager");
 const { startUsbWatch } = require("./services/usb-watch");
 const { appendWechatLoginLog } = require("./services/logs");
 const oauth = require("./services/oauth");
@@ -39,13 +38,16 @@ function logLine(message) {
   } catch { /* 日志失败不阻塞启动 */ }
 }
 
+// 命令行授权工具（--bind-usb / --check-license）：不参与单实例锁——主窗口开着
+// （比如停在启动错误页）时也要能执行，绑定完回窗口点"重试"即可进入，形成闭环。
+const cliCommand = process.argv.find((arg) => arg === "--bind-usb" || arg === "--check-license") || "";
+
 /** 命令行工具：--bind-usb 绑定授权，--check-license 校验授权（替代旧 .bat 脚本）。 */
 async function runCliCommand() {
-  const command = process.argv.find((arg) => arg === "--bind-usb" || arg === "--check-license");
-  if (!command) return false;
+  if (!cliCommand) return false;
   await app.whenReady();
   try {
-    if (command === "--bind-usb") {
+    if (cliCommand === "--bind-usb") {
       const result = license.bindUsb();
       console.log(`授权绑定完成: ${result.filePath}`);
       console.log(`设备指纹: ${result.maskedFingerprint}`);
@@ -62,13 +64,11 @@ async function runCliCommand() {
   return true;
 }
 
-function showFatalError(message) {
-  const { dialog } = require("electron");
-  dialog.showErrorBox("小龙虾启动失败", message);
-}
-
-/** 启动链：模块引导 → 授权校验 → 后台校验/模型同步 → 残留进程清理 → 窗口。 */
-async function bootSequence() {
+/**
+ * 启动核心：模块引导 → 授权校验 → 后台校验/模型同步 → 残留进程清理。
+ * 幂等可重试（模块已解压/授权已通过时秒回），失败抛错由状态机转成错误页。
+ */
+async function bootCore() {
   const { logsDir } = getPaths();
   fs.mkdirSync(logsDir, { recursive: true });
 
@@ -92,15 +92,20 @@ async function bootSequence() {
   }
   logLine("backend check done");
 
-  await cleanupStaleProcesses();
+  await processManager.cleanupStaleProcesses();
   logLine("stale cleanup done");
   // 配置归一化回写一次：模型展示名的品牌前缀等约定在写入路径上补齐，
   // 升级前写好的旧配置靠这一步在首次启动就生效。
   try { writeConfig(readConfig()); } catch { /* 归一化失败不阻塞启动 */ }
+}
+
+/** 启动成功后的常驻服务：预热、心跳保活、登录回调、拔盘看护（只挂一次，重试不重复）。 */
+function startBootServices() {
+  if (bootServicesStarted) return;
+  bootServicesStarted = true;
   // 后台预热：把 openclaw 组件的首次冷启动（实测约 1 分钟）挪到启动阶段，
   // 用户还在走登录/模型步骤时二维码就已经备好，到 BOT 页不用再等。
   try { if (processManager.prewarmWechatLogin({ warmup: true })) logLine("wechat login prewarmed"); } catch { /* 预热失败不阻塞启动 */ }
-  // 心跳与订阅令牌保活：后台"最近在线"保持新鲜，令牌轮换后自动回写 provider。
   keepalive.start();
   // 浏览器不允许网页关闭/跳回客户端，这里在授权成功时把客户端窗口唤到前台作为补偿。
   oauth.onLoginSuccess(() => {
@@ -110,9 +115,56 @@ async function bootSequence() {
       mainWindow.focus();
     }
   });
-  logLine("keepalive started");
-  createMainWindow();
+  // 拔盘看护：U 盘移除即停网关、清进程、退出。
+  startUsbWatch(() => {
+    logLine("usb removed; shutting down");
+    void gracefulExit().finally(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      app.exit(0);
+    });
+  });
+  logLine("boot services started");
 }
+
+// ---- 启动状态机：窗口先开（加载页），核心链后台跑，结果推给渲染层 ----
+
+let bootState = { status: "booting", message: "" };
+let bootRunning = false;
+let bootServicesStarted = false;
+
+/** 把启动状态推给渲染层（页面还没加载完时事件会被丢弃，渲染层靠 getBootState 补齐首查）。 */
+function sendBootState() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("boot:state", bootState);
+}
+
+/** 跑一次启动核心：成功进入常驻服务，失败进入错误页（用户可点重试再跑）。 */
+async function runBoot() {
+  if (bootRunning) return;
+  bootRunning = true;
+  bootState = { status: "booting", message: "" };
+  sendBootState();
+  try {
+    await bootCore();
+  } catch (error) {
+    const message = error?.message || String(error);
+    logLine(`boot failed: ${message}`);
+    appendWechatLoginLog(`boot failed: ${message}`);
+    bootState = { status: "error", message };
+    sendBootState();
+    return;
+  } finally {
+    bootRunning = false;
+  }
+  bootState = { status: "ready" };
+  sendBootState();
+  startBootServices();
+}
+
+ipcMain.handle("app:getBootState", () => bootState);
+ipcMain.handle("app:retryBoot", () => {
+  void runBoot();
+  return { ok: true };
+});
 
 function createMainWindow() {
   const productVersion = String(require("./app-config").getAppConfig().product?.version || app.getVersion());
@@ -176,7 +228,7 @@ async function gracefulExit() {
   try { await processManager.shutdownAll(); } catch { /* 退出路径尽力清理 */ }
 }
 
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = Boolean(cliCommand) || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
@@ -190,26 +242,10 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     if (await runCliCommand()) return;
     registerIpcHandlers();
-    try {
-      await bootSequence();
-    } catch (error) {
-      const message = error?.message || String(error);
-      logLine(`boot failed: ${message}`);
-      appendWechatLoginLog(`boot failed: ${message}`);
-      showFatalError(message);
-      // 致命启动错误：用户关掉提示即整体退出。此前会残留窗口与进程，
-      // portable 启动器（其可执行映像就是用户下载的 exe）跟着驻留，导致 exe 文件被锁删不掉。
-      app.exit(1);
-      return;
-    }
-    // 拔盘看护：U 盘移除即停网关、清进程、退出。
-    startUsbWatch(() => {
-      logLine("usb removed; shutting down");
-      void gracefulExit().finally(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
-        app.exit(0);
-      });
-    });
+    // 窗口先行：加载页立刻可见（首次模块解压约 1 分钟不再是黑等），
+    // 启动核心在后台进行，失败在窗口错误页展示并支持重试。
+    createMainWindow();
+    void runBoot();
   });
 
   app.on("activate", () => {

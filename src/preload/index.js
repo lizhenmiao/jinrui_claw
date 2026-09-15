@@ -13,6 +13,14 @@ const bridge = {
     getGatewayToken: invoke("app:getGatewayToken"),
     openExternal: invoke("app:openExternal"),
     quit: invoke("app:quit"),
+    getBootState: invoke("app:getBootState"),
+    retryBoot: invoke("app:retryBoot"),
+    // 启动状态变化事件（booting/ready/error）；返回取消订阅函数。
+    onBootState: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("boot:state", listener);
+      return () => ipcRenderer.removeListener("boot:state", listener);
+    },
   },
   config: {
     load: invoke("config:load"),
