@@ -28,13 +28,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-portable
-          path: release/小龙虾U盘版.exe
+          path: release/zgyclaw-windows-amd64.exe
           if-no-files-found: error
       - name: 发布到 Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/小龙虾U盘版.exe
+          files: release/zgyclaw-windows-amd64.exe
           generate_release_notes: true
 
   macos:

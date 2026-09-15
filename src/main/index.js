@@ -196,11 +196,10 @@ if (!gotLock) {
       const message = error?.message || String(error);
       logLine(`boot failed: ${message}`);
       appendWechatLoginLog(`boot failed: ${message}`);
-      createMainWindow();
-      mainWindow.webContents.on("did-finish-load", () => {
-        mainWindow?.webContents.send("boot:error", { message });
-      });
       showFatalError(message);
+      // 致命启动错误：用户关掉提示即整体退出。此前会残留窗口与进程，
+      // portable 启动器（其可执行映像就是用户下载的 exe）跟着驻留，导致 exe 文件被锁删不掉。
+      app.exit(1);
       return;
     }
     // 拔盘看护：U 盘移除即停网关、清进程、退出。

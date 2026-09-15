@@ -20,7 +20,6 @@ export const desktopApi = {
     getGatewayToken: () => getBridge().app.getGatewayToken(),
     openExternal: (url) => getBridge().app.openExternal(url),
     quit: () => getBridge().app.quit(),
-    onBootError: (callback) => getBridge().app.onBootError(callback),
   },
   config: {
     load: () => getBridge().config.load(),

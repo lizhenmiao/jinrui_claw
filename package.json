@@ -2,7 +2,7 @@
   "name": "zgy-claw-desktop",
   "version": "3.0.0",
   "private": true,
-  "description": "小龙虾 U 盘版桌面客户端：Electron 主进程内聚配置服务，React 渲染配置向导",
+  "description": "小龙虾 U 盘版客户端：便携式 AI 智能协作伙伴，数据随 U 盘即插即用",
   "main": "src/main/index.js",
   "author": "ZgyClaw",
   "license": "UNLICENSED",
@@ -58,7 +58,7 @@
           ]
         }
       ],
-      "artifactName": "小龙虾U盘版.${ext}"
+      "artifactName": "zgyclaw-windows-amd64.${ext}"
     },
     "mac": {
       "target": [
@@ -72,7 +72,7 @@
       ],
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "小龙虾macOS版-${arch}.${ext}"
+      "artifactName": "zgyclaw-mac-${arch}.${ext}"
     }
   },
   "dependencies": {

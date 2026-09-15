@@ -43,8 +43,8 @@ npx electron .
 ## 打包交付
 
 ```bash
-npm run dist:win     # Windows x64 单文件 portable exe → release/小龙虾U盘版.exe
-npm run dist:mac     # macOS arm64 dmg → release/（需在 macOS 上执行）
+npm run dist:win     # Windows x64 单文件 portable exe → release/zgyclaw-windows-amd64.exe
+npm run dist:mac     # macOS 双架构 dmg → release/zgyclaw-mac-{arm64,x64}.dmg（需在 macOS 上执行）
 ```
 
 Windows portable exe 每次启动自解压到系统临时目录运行，数据不受影响（始终写在 exe 同目录）。
@@ -63,8 +63,8 @@ electron-builder → 无论成败恢复源码。
 打包发行的副本强制校验 U 盘指纹（开发模式免校验），母本 U 盘与客户 U 盘统一绑定：
 
 ```bash
-小龙虾U盘版.exe --bind-usb        # 为当前 U 盘生成授权文件 data/license.json
-小龙虾U盘版.exe --check-license   # 校验当前授权
+zgyclaw-windows-amd64.exe --bind-usb        # 为当前 U 盘生成授权文件 data/license.json
+zgyclaw-windows-amd64.exe --check-license   # 校验当前授权
 ```
 
 - 授权文件与 U 盘卷序列号指纹绑定，复制到其他 U 盘无法通过校验；
@@ -106,7 +106,7 @@ resources/        随包分发的资源：app.config.json、payload 模块压缩
 
 ```
 U 盘根目录
-├── 小龙虾U盘版.exe      # 唯一交付文件（macOS 为 小龙虾macOS版.app）
+├── zgyclaw-windows-amd64.exe      # 唯一交付文件（macOS 为 小龙虾U盘版.app，dmg 解包即得）
 ├── app.config.json      # 可选：覆盖内置运营配置（不生成则用包内默认值）
 └── data/                # 运行期文件统一存放，首次运行自动生成
     ├── license.json     # --bind-usb 生成，与该 U 盘绑定

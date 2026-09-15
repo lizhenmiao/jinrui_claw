@@ -13,11 +13,6 @@ const bridge = {
     getGatewayToken: invoke("app:getGatewayToken"),
     openExternal: invoke("app:openExternal"),
     quit: invoke("app:quit"),
-    onBootError: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("boot:error", listener);
-      return () => ipcRenderer.removeListener("boot:error", listener);
-    },
   },
   config: {
     load: invoke("config:load"),

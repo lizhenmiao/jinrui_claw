@@ -16,10 +16,6 @@ export default function App() {
   const [configured, setConfigured] = useState(false);
 
   useEffect(() => {
-    desktopApi.app.onBootError((payload) => {
-      setBootError(payload?.message || "启动失败");
-      setPhase("error");
-    });
     (async () => {
       try {
         // 提示落点由运营配置决定（ui.toastPosition），默认右上角。
