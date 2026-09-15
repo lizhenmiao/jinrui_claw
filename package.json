@@ -48,17 +48,17 @@
     "asar": true,
     "npmRebuild": false,
     "forceCodeSigning": false,
+    "executableName": "zgyclaw",
     "win": {
       "icon": "build/icon.ico",
       "target": [
         {
-          "target": "portable",
+          "target": "dir",
           "arch": [
             "x64"
           ]
         }
-      ],
-      "artifactName": "zgyclaw-windows-amd64.${ext}"
+      ]
     },
     "mac": {
       "target": [

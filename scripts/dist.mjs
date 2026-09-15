@@ -3,6 +3,10 @@
  * 调用 electron-builder → 无论成败恢复源码。保证安装包内无明文业务源码，
  * 仓库工作区始终回到源码状态。
  *
+ * Windows 产出目录形态（exe + resources 文件夹，压成 zip 交付）：双击即启动、
+ * 没有单文件 portable 的自解压等待，启动等待全部由应用内加载页承接。
+ * macOS 产出 dmg（arm64 + x64）。
+ *
  * 用法：node scripts/dist.mjs --win | --mac
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -58,10 +62,27 @@ async function compileBytecode() {
   if (result.status !== 0) throw new Error(`字节码编译失败（exit ${result.status}）`);
 }
 
+/** Windows 目录形态收尾：win-unpacked 更名为 zgyclaw 并压成交付 zip（解压到 U 盘双击即启动）。 */
+function packageWinDir() {
+  const releaseDir = path.join(PROJECT_ROOT, "release");
+  const unpacked = path.join(releaseDir, "win-unpacked");
+  const appDir = path.join(releaseDir, "zgyclaw");
+  const zipPath = path.join(releaseDir, "zgyclaw-windows-amd64.zip");
+  if (!fs.existsSync(unpacked)) throw new Error("打包产物目录缺失：release/win-unpacked");
+  fs.rmSync(appDir, { recursive: true, force: true });
+  fs.renameSync(unpacked, appDir);
+  fs.rmSync(zipPath, { force: true });
+  const tarExecutable = process.platform === "win32"
+    ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
+    : "tar";
+  const result = spawnSync(tarExecutable, ["-a", "-cf", zipPath, "zgyclaw"], { cwd: releaseDir, stdio: "inherit", windowsHide: true });
+  if (result.status !== 0) throw new Error(`Windows 目录压缩失败（exit ${result.status}）`);
+}
+
 /** 调用 electron-builder 执行目标平台打包，返回退出码。mac 一次出 arm64 + x64 两个 dmg。 */
 function runBuilder(platform) {
   const builderArgs = platform === "win"
-    ? ["--win", "portable", "--x64", "--publish", "never"]
+    ? ["--win", "dir", "--x64", "--publish", "never"]
     : ["--mac", "dmg", "--x64", "--arm64", "--publish", "never"];
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["node_modules/electron-builder/cli.js", ...builderArgs], {
@@ -95,6 +116,14 @@ backupSources();
 try {
   await compileBytecode();
   exitCode = await runBuilder(target === "--win" ? "win" : "mac");
+  if (exitCode === 0 && target === "--win") {
+    try {
+      packageWinDir();
+    } catch (error) {
+      console.error(`[dist] ${error.message}`);
+      exitCode = 1;
+    }
+  }
 } finally {
   restoreSources();
 }
