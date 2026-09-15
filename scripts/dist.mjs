@@ -58,11 +58,11 @@ async function compileBytecode() {
   if (result.status !== 0) throw new Error(`字节码编译失败（exit ${result.status}）`);
 }
 
-/** 调用 electron-builder 执行目标平台打包，返回退出码。 */
+/** 调用 electron-builder 执行目标平台打包，返回退出码。mac 一次出 arm64 + x64 两个 dmg。 */
 function runBuilder(platform) {
   const builderArgs = platform === "win"
     ? ["--win", "portable", "--x64", "--publish", "never"]
-    : ["--mac", "dmg", "--arm64", "--publish", "never"];
+    : ["--mac", "dmg", "--x64", "--arm64", "--publish", "never"];
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["node_modules/electron-builder/cli.js", ...builderArgs], {
       cwd: PROJECT_ROOT,

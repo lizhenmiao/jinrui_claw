@@ -65,13 +65,14 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "小龙虾macOS版.${ext}"
+      "artifactName": "小龙虾macOS版-${arch}.${ext}"
     }
   },
   "dependencies": {
