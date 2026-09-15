@@ -49,7 +49,8 @@ function cleanup() {
 process.on("SIGTERM", cleanup);
 process.on("SIGINT", cleanup);
 
-// 常驻轮询：主进程消失即清杀子进程。
+// 常驻轮询：主进程消失即清杀子进程。间隔由主进程通过 WARDEN_CHECK_INTERVAL_MS 下发
+// （取值来自 src/shared/timing.json），未下发时退回默认值。
 setInterval(() => {
   if (!ownerAlive()) cleanup();
-}, 1500);
+}, Number(process.env.WARDEN_CHECK_INTERVAL_MS) || 1500);

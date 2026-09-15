@@ -54,12 +54,14 @@ async function buildRepairChecks() {
   const pluginRoot = modulesCacheDir;
   for (const [label, pluginRelative] of [
     ["微信插件", path.join("@tencent-weixin", "openclaw-weixin")],
-    ["企业微信插件", path.join("@wecom", "wecom-openclaw-plugin")],
     ["飞书插件", path.join("@openclaw", "feishu")],
   ]) {
     const installed = fs.existsSync(path.join(pluginRoot, pluginRelative));
     checks.push(buildCheck(label, installed, "已安装", `缺少 ${pluginRelative.replaceAll(path.sep, "/")}`));
   }
+  // 企业微信走按需 payload（openclaw 官方安装布局），配置时自动装进 data 的 extensions 目录。
+  const wecomInstalled = fs.existsSync(path.join(getPaths().stateDir, "extensions", "wecom-openclaw-plugin", "openclaw.plugin.json"));
+  checks.push(buildCheck("企业微信插件", wecomInstalled, "已安装", "首次配置企业微信时自动安装"));
   const qqbotInstalled = findQQBotPluginPaths().length > 0;
   checks.push(buildCheck("QQ 插件", qqbotInstalled, "QQ 插件已安装", "QQ 插件尚未安装，首次配置 QQ 时自动安装"));
   const gatewayRunning = await isGatewayRunning();

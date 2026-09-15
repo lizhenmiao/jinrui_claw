@@ -106,6 +106,29 @@ function decryptConfigSecrets(value) {
   return result;
 }
 
+/** 网关配置中模型条目允许的字段；其余（如产品 UI 专用标记）一律剔除。 */
+const MODEL_FIELDS = ["id", "name", "reasoning", "input", "contextWindow", "maxTokens"];
+
+/** 规整 provider 下的模型条目，保证网关配置校验通过。 */
+function normalizeProviderModels(config) {
+  const providers = config?.models?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return config;
+  for (const provider of Object.values(providers)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    if (!Array.isArray(provider.models)) continue;
+    provider.models = provider.models
+      .filter((model) => model && typeof model === "object" && !Array.isArray(model) && model.id)
+      .map((model) => {
+        const cleaned = {};
+        for (const key of MODEL_FIELDS) {
+          if (model[key] !== undefined) cleaned[key] = model[key];
+        }
+        return cleaned;
+      });
+  }
+  return config;
+}
+
 /** openclaw 校验 provider 对象严格，剔除仅产品 UI 使用的元数据字段。 */
 function sanitizeRuntimeConfig(config) {
   const out = JSON.parse(JSON.stringify(config || {}));
@@ -116,9 +139,10 @@ function sanitizeRuntimeConfig(config) {
       delete provider.displayName;
       delete provider.keyMode;
       delete provider.requiresClientKey;
+      delete provider.source;
     }
   }
-  return out;
+  return normalizeProviderModels(out);
 }
 
 /** 生成解密净化后的运行时配置副本，返回文件路径（供网关子进程读取）。 */
@@ -147,6 +171,7 @@ module.exports = {
   decryptConfigSecrets,
   encryptConfigSecrets,
   isEncryptedEnvelope,
+  normalizeProviderModels,
   prepareRuntimeConfig,
   sanitizeRuntimeConfig,
   writeJsonAtomic,

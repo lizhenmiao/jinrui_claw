@@ -29,6 +29,7 @@ const bridge = {
     start: invoke("gateway:start"),
     startWechatFirst: invoke("gateway:startWechatFirst"),
     stop: invoke("gateway:stop"),
+    restart: invoke("gateway:restart"),
     status: invoke("gateway:status"),
     openChat: invoke("gateway:openChat"),
   },
@@ -52,12 +53,16 @@ const bridge = {
   account: {
     login: invoke("account:login"),
     status: invoke("account:status"),
+    authResult: invoke("account:authResult"),
+    cancelLogin: invoke("account:cancelLogin"),
     refresh: invoke("account:refresh"),
     logout: invoke("account:logout"),
     subscription: invoke("account:subscription"),
+    subscriptionModels: invoke("account:subscriptionModels"),
     syncSubscriptionModel: invoke("account:syncSubscriptionModel"),
   },
   channels: {
+    summary: invoke("channel:summary"),
     wecom: {
       load: invoke("channel:wecom:load"),
       save: invoke("channel:wecom:save"),
@@ -67,6 +72,7 @@ const bridge = {
       save: invoke("channel:feishu:save"),
       pairing: invoke("channel:feishu:pairing"),
       approvePairing: invoke("channel:feishu:approvePairing"),
+      revokeUser: invoke("channel:feishu:revokeUser"),
       setDmPolicy: invoke("channel:feishu:setDmPolicy"),
     },
     dingtalkChannel: {
@@ -74,7 +80,9 @@ const bridge = {
       save: invoke("channel:dingtalkChannel:save"),
     },
     wechat: {
-      login: invoke("channel:wechat:login"),
+      login: (options) => ipcRenderer.invoke("channel:wechat:login", options),
+      prewarm: invoke("channel:wechat:prewarm"),
+      warmup: invoke("channel:wechat:warmup"),
       status: invoke("channel:wechat:status"),
     },
     qq: {

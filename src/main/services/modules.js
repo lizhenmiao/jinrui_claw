@@ -24,6 +24,22 @@ function isReady() {
   return fs.existsSync(path.join(modulesCacheDir, ".zgy-extract-ready")) && fs.existsSync(moduleEntryPath());
 }
 
+/**
+ * 本机是否已经把 openclaw 组件跑起来过一次。
+ * 刚解压出来的模块树第一次执行要付冷启动代价（实测约 1 分钟：Windows 首次读取扫描 + 冷文件缓存），
+ * 标记与模块缓存同目录，模块重新解压时随 node_modules 一起消失，冷启动代价随之重来。
+ */
+function isRuntimeWarm() {
+  return fs.existsSync(path.join(getPaths().modulesCacheDir, ".zgy-warm"));
+}
+
+/** 组件首次成功跑起来后落标记，之后的启动不再按"首次"提示。 */
+function markRuntimeWarm() {
+  try {
+    fs.writeFileSync(path.join(getPaths().modulesCacheDir, ".zgy-warm"), `warmedAt=${new Date().toISOString()}\n`, "utf8");
+  } catch { /* 标记写不进去只影响提示文案，不影响功能 */ }
+}
+
 /** 解压到临时目录再原子改名，避免中途失败留下半个缓存。 */
 function extractArchive(archive, cacheParent) {
   fs.mkdirSync(cacheParent, { recursive: true });
@@ -64,33 +80,72 @@ function ensureModules() {
   return modulesCacheDir;
 }
 
-/** QQBot 插件按需安装：首次配置 QQ 时把内置压缩包安装到数据目录的 npm 工程。 */
-function ensureQQBotDependencyPayload() {
-  const { stateDir, qqbotPayloadZip } = getPaths();
-  const projectDir = path.join(stateDir, "npm", "projects", "openclaw-qqbot-d3553f72f8");
-  const targetNodeModules = path.join(projectDir, "node_modules");
-  const manifest = path.join(targetNodeModules, "@openclaw", "qqbot", "openclaw.plugin.json");
-  if (fs.existsSync(manifest)) return true;
-  if (!fs.existsSync(qqbotPayloadZip)) return false;
 
-  const tmpDir = path.join(path.dirname(qqbotPayloadZip), `_qqbot-extract-${process.pid}`);
+/**
+ * 按需安装的 payload 包登记表：压缩包放 `resources/payload/`，解压到 target 目录。
+ * 只给"不随模块包分发、要单独分发"的插件用；新增平台加一条即可。
+ * 压缩包格式不限（tar / tar.gz / zip 都能用系统 tar 解），补齐 manifest 即视为已安装。
+ */
+const PAYLOADS = {
+  qqbot: {
+    archive: "qqbot-node_modules.zip",
+    target: (p) => path.join(p.npmProjectsDir, "openclaw-qqbot-d3553f72f8"),
+    manifest: "node_modules/@openclaw/qqbot/openclaw.plugin.json",
+  },
+  // 企业微信官方插件按 openclaw 官方安装布局分发（extensions 目录自动发现，无需登记加载路径）；
+  // 包里刻意不含 node_modules/openclaw 链接（指向本机模块缓存、随机器变化），激活时代码重建。
+  wecom: {
+    archive: "wecom-plugin-extensions.zip",
+    target: (p) => path.join(p.stateDir, "extensions", "wecom-openclaw-plugin"),
+    manifest: "openclaw.plugin.json",
+  },
+};
+
+/** payload 是否已就位（清单文件存在即认为装好了）。 */
+function isPayloadReady(name) {
+  const entry = PAYLOADS[name];
+  if (!entry) return false;
+  return fs.existsSync(path.join(entry.target(getPaths()), entry.manifest));
+}
+
+/**
+ * 确保某个 payload 已解压到目标目录，返回目标目录路径（失败返回空串）。
+ * 解压到临时目录再整体拷贝，避免中途失败留下半个安装；已就位时直接返回。
+ */
+function ensurePayload(name) {
+  const entry = PAYLOADS[name];
+  if (!entry) return "";
+  const paths = getPaths();
+  const target = entry.target(paths);
+  if (isPayloadReady(name)) return target;
+
+  const archive = path.join(paths.payloadDir, entry.archive);
+  if (!fs.existsSync(archive)) {
+    log(`payload ${name} missing archive: ${archive}`);
+    return "";
+  }
+
+  const tmpDir = path.join(paths.payloadDir, `_payload-${name}-${process.pid}`);
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
   try {
     const tarExecutable = process.platform === "win32"
       ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
       : "tar";
-    const result = spawnSync(tarExecutable, ["-xf", qqbotPayloadZip, "-C", tmpDir], { windowsHide: true, timeout: 900000 });
-    if (result.status !== 0) throw new Error("QQBot 依赖解压失败: " + (result.stderr || result.status));
-    const sourceNodeModules = path.join(tmpDir, "node_modules");
-    if (!fs.existsSync(path.join(sourceNodeModules, "@openclaw", "qqbot", "openclaw.plugin.json"))) {
-      throw new Error("QQBot 压缩包内容不完整");
-    }
-    fs.mkdirSync(projectDir, { recursive: true });
-    fs.cpSync(sourceNodeModules, targetNodeModules, { recursive: true, force: true });
+    // -xf 对 tar / tar.gz / zip 都能自适应（Windows 的 bsdtar 支持 zip）。
+    const result = spawnSync(tarExecutable, ["-xf", archive, "-C", tmpDir], { windowsHide: true, timeout: 900000 });
+    if (result.status !== 0) throw new Error(`payload ${name} 解压失败: ${result.stderr || result.status}`);
+    if (!fs.existsSync(path.join(tmpDir, entry.manifest))) throw new Error(`payload ${name} 压缩包内容不完整`);
+    fs.mkdirSync(target, { recursive: true });
+    fs.cpSync(tmpDir, target, { recursive: true, force: true });
+    log(`payload ${name} installed to ${target}`);
+  } catch (error) {
+    log(`payload ${name} install failed: ${error.message}`);
+    return "";
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 临时目录清理失败无害 */ }
   }
-  return fs.existsSync(manifest);
+  return isPayloadReady(name) ? target : "";
 }
 
 /** 查找已安装的 QQBot 插件工程目录列表。 */
@@ -123,8 +178,11 @@ function bundledPluginPath(name) {
 module.exports = {
   bundledPluginPath,
   ensureModules,
-  ensureQQBotDependencyPayload,
+  ensurePayload,
   findQQBotConnectorEntry,
   findQQBotPluginPaths,
+  isPayloadReady,
+  isRuntimeWarm,
+  markRuntimeWarm,
   moduleEntryPath,
 };

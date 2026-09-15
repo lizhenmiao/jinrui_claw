@@ -1,54 +1,47 @@
 /**
- * 向导 BOT 页：左侧 74px 通道工具栏 + 右侧灰色工作区（固定行高 + 底部链接行），
- * 对照设计稿：内容区直角、灰面内滚动，通道面板无边框直接落在灰面上。
+ * 向导 BOT 页：对照 2.0 设计稿（Desktop-12）—— 通道面板工作区（ChannelWorkbench）+ 底部"暂不接入，跳过"。
+ * 进入页面即预生成微信登录二维码（未绑定过时），并轮询各通道连接状态：
+ * 只要有一个平台接入成功，底部"下一步"就会亮起，不必非要点"跳过"。
  */
-import React from "react";
-import { ChannelPanel } from "../components/ChannelPanels.jsx";
-
-const TOOLS = [
-  { id: "wecom", name: "企业微信", icon: "wecom.png" },
-  { id: "feishu", name: "飞书 / Lark", icon: "feishu.png" },
-  { id: "qqbot", name: "QQ 机器人", icon: "qq.png" },
-  { id: "dingtalk-channel", name: "钉钉对话", icon: "dingtalk.png" },
-  { id: "wechat", name: "微信 Clawbot", icon: "wechat.png" },
-  { id: "none", name: "暂不接入", icon: "companion.png" },
-];
+import React, { useEffect, useRef } from "react";
+import desktopApi from "../api.js";
+import timing from "../../../shared/timing.json";
+import { ChannelWorkbench } from "../components/ChannelWorkbench.jsx";
 
 export default function BotPage({ context }) {
-  const { selectedTool, setSelectedTool, setPage, toast } = context;
+  const { setPage, setBotReady, toast } = context;
+  const prewarmed = useRef(false);
+
+  useEffect(() => {
+    // 预热登录会话：未绑定时二维码在后台生成；已绑定时也预热，用户点"重新绑定"能立刻出码。
+    if (prewarmed.current) return;
+    prewarmed.current = true;
+    desktopApi.channels.wechat.prewarm().catch(() => { /* 预热失败不打扰用户，面板内可重试 */ });
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const summary = await desktopApi.channels.summary();
+        if (!alive) return;
+        setBotReady(Object.values(summary || {}).some((item) => item?.connected));
+      } catch { /* 摘要读取失败保持原状态 */ }
+    };
+    void refresh();
+    const timer = setInterval(refresh, timing.channels.statusRefreshIntervalMs);
+    return () => { alive = false; clearInterval(timer); };
+  }, [setBotReady]);
 
   return (
-    <div className="grid flex-1 grid-cols-[74px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_42px] overflow-hidden">
-      <aside className="row-span-2 flex w-[74px] flex-col items-center gap-2.5 overflow-y-auto py-6">
-        {TOOLS.map((tool) => (
-          <button
-            key={tool.id}
-            type="button"
-            className={`flex h-[58px] w-[74px] flex-col items-center justify-center rounded-[10px] px-[5px] py-2 ${selectedTool === tool.id ? "bg-[#e8e8e8]" : "hover:bg-surface"}`}
-            onClick={() => setSelectedTool(tool.id)}
-          >
-            <img src={`assets/${tool.icon}`} alt="" className="h-11 w-11 object-contain" />
-          </button>
-        ))}
-      </aside>
-      <main className="mx-0 mt-6 min-w-0 overflow-hidden border border-[rgba(0,0,0,0.10)] bg-surface">
-        <div className="h-full overflow-y-auto px-8 py-7">
-          <ChannelPanel toolId={selectedTool} toast={toast} plain />
-        </div>
-      </main>
-      <div className="col-start-2 flex h-[42px] flex-none items-center justify-center gap-2 bg-white text-sm text-[#666]">
-        查看 <a href="#" onClick={(event) => event.preventDefault()} className="text-link">接入文档</a>
-        <button
-          type="button"
-          className="text-link"
-          onClick={() => {
-            setSelectedTool("none");
-            setPage("confirm");
-          }}
-        >
+    <ChannelWorkbench
+      className="flex-1"
+      toast={toast}
+      footer={(
+        <button type="button" className="text-link" onClick={() => setPage("confirm")}>
           暂不接入，跳过
         </button>
-      </div>
-    </div>
+      )}
+    />
   );
 }

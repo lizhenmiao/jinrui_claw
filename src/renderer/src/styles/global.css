@@ -4,29 +4,39 @@
 @tailwind utilities;
 
 /*
- * 设计令牌：全部颜色集中在此定义，tailwind.config.js 按同名映射，
- * 调整主题只需要改这里的变量值。
+ * 设计令牌：颜色全部集中在此定义（浅色版，取值来自 2.0 设计稿），
+ * tailwind.config.js 按同名映射；切换深色只需替换这里的变量值。
  */
 :root {
-  --color-paper: #f5f5f5;      /* 页面底色 / 日志面板 / 灰卡片 */
-  --color-ink: #171717;        /* 主文本 / 主按钮 */
-  --color-line: #e5e5e5;       /* 描边 */
-  --color-brand: #4e7cff;      /* 品牌蓝（焦点描边） */
-  --color-branddeep: #5f78ff;  /* 深品牌蓝（强调） */
-  --color-link: #3275e8;       /* 链接蓝 */
-  --color-ok: #20c878;         /* 成功 */
+  --color-page: #f9f9f9;       /* 页面底色 */
+  --color-paper: #f9f9f9;      /* 灰底容器 / 二维码框 */
+  --color-card: #ffffff;       /* 白色卡片 / 横幅 / 输入框 */
+  --color-panel: #f2f2f2;      /* 运行日志面板 / 灰色工作区 */
+  --color-surface: #f2f2f2;    /* 通道配置工作区底色 */
+  --color-linesoft: #ededed;   /* 卡片浅描边 */
+  --color-switch: #eff0f2;     /* 胶囊切换轨道 / 输入框底 */
+  --color-field: #eff0f2;      /* 输入框底色 */
+  --color-ink: #000000;        /* 主按钮黑底 / 主文本 */
+  --color-title: #020202;      /* 标题 / 品牌字 */
+  --color-body: #333333;       /* 正文文本 */
+  --color-subtle: #656c75;     /* 说明文本 */
+  --color-muted: #868686;      /* 次要文本 */
+  --color-faint: #adadad;      /* 弱文本 / 禁用 */
+  --color-placeholder: #bbbbbb;/* 输入占位符 */
+  --color-line: #dfdfdf;       /* 常规描边 */
+  --color-logo: #ec2e2b;       /* 品牌 ZgyClaw 红字 */
+  --color-claw: #ec2e2b;       /* 品牌强调红 */
+  --color-link: #1d60ff;       /* 链接蓝 */
+  --color-brand: #1d60ff;      /* 品牌蓝（焦点描边） */
+  --color-branddeep: #1d60ff;  /* 深品牌蓝 */
+  --color-hot: #fb232f;        /* 订阅套餐推荐红 */
+  --color-ok: #43cf7c;         /* 成功绿 */
   --color-okdeep: #20a760;     /* 成功文本 */
   --color-warn: #ffad17;       /* 警示橙 */
   --color-warndeep: #c68700;   /* 警示文本 */
-  --color-danger: #ff4d4f;     /* 危险 */
+  --color-danger: #fb232f;     /* 危险 */
   --color-dangerdeep: #d6473f; /* 危险文本 */
-  --color-claw: #ff3b30;       /* 品牌 Claw 红字 */
-  --color-muted: #747474;      /* 次要文本 */
-  --color-faint: #9a9a9a;      /* 弱文本 */
-  --color-tint: #eef4ff;       /* 浅蓝信息底（首页横幅 / 订阅卡片） */
-  --color-surface: #f2f2f2;    /* BOT 页灰色工作区 */
-  --color-field: #f0f0f0;      /* 输入框底色 */
-  --color-hot: #ff2633;        /* 订阅套餐推荐红 */
+  --color-tint: #eaf1fc;       /* 浅蓝信息底（首页横幅 / 订阅条） */
   --color-okbg: #e5f8ed;       /* 运行中状态胶囊底 */
   --color-warnbg: #fff0c8;     /* 启动中状态胶囊底 */
   --color-dangerbg: #ffe5e3;   /* 停止/失败状态胶囊底 */
@@ -66,9 +76,8 @@ textarea {
   background: transparent;
 }
 
-/* 加载页滑动横线 */
+/* 加载页滑动横线：匀速横穿，起止两端都完全在轨道外，循环重新开始时看不见跳变 */
 @keyframes loading-slide {
-  0% { transform: translateX(-90px); }
-  50% { transform: translateX(70px); }
-  100% { transform: translateX(190px); }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
 }

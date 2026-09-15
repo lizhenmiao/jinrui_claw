@@ -26,6 +26,17 @@ export default {
         okbg: "var(--color-okbg)",
         warnbg: "var(--color-warnbg)",
         dangerbg: "var(--color-dangerbg)",
+        page: "var(--color-page)",
+        card: "var(--color-card)",
+        panel: "var(--color-panel)",
+        linesoft: "var(--color-linesoft)",
+        switch: "var(--color-switch)",
+        logo: "var(--color-logo)",
+        title: "var(--color-title)",
+        body: "var(--color-body)",
+        subtle: "var(--color-subtle)",
+        placeholder: "var(--color-placeholder)",
+
       },
       fontFamily: {
         sans: ['"Microsoft YaHei UI"', '"PingFang SC"', '"Segoe UI"', "system-ui", "sans-serif"],

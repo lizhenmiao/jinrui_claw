@@ -8,11 +8,12 @@ const os = require("os");
 const path = require("path");
 const { getPaths } = require("../paths");
 const { getAppConfig } = require("../app-config");
-const { getUsbId } = require("./fingerprint");
+const { getUsbId, getDriveInfo } = require("./fingerprint");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
 const { readConfig, writeConfig } = require("./config-store");
+const timing = require("../../shared/timing.json");
 
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = timing.backend.requestTimeoutMs;
 
 function stripBom(text) {
   return typeof text === "string" && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
@@ -101,6 +102,7 @@ function clientContext() {
     hostname: os.hostname(),
     os: `${os.type()} ${os.release()}`,
     arch: os.arch(),
+    driveFs: String(getDriveInfo().fileSystem || ""),
     clientVersion: settings.clientVersion,
     channel: settings.channel,
   };
@@ -119,7 +121,7 @@ async function reportEvent(event) {
       level: event.level || "info",
       message: event.message || "",
       details: event.details || {},
-    }, 5000);
+    }, timing.backend.eventTimeoutMs);
     return { ok: true };
   } catch (error) {
     writeLog("event report failed", { error: error.message, event });
@@ -128,8 +130,7 @@ async function reportEvent(event) {
 }
 
 /** 后台授权校验：reportOnly 模式仅上报不拦截。 */
-async function checkBackendLicense() {
-  const settings = readBackendSettings();
+async function checkBackendLicense() {  const settings = readBackendSettings();
   if (!settings.enabled) {
     writeLog("backend license check skipped", { reason: "backend.url 或 backend.licenseKey 未配置" });
     return { ok: true, skipped: true, reportOnly: true };
@@ -143,6 +144,7 @@ async function checkBackendLicense() {
       hostname: ctx.hostname,
       os: ctx.os,
       arch: ctx.arch,
+      driveFs: ctx.driveFs,
       clientVersion: ctx.clientVersion,
     });
     writeLog("backend license check success", { usbId: ctx.usbId });
@@ -160,6 +162,30 @@ async function checkBackendLicense() {
   }
 }
 
+/** 设备心跳：刷新后台"最近在线"，让运营侧能看到客户端当前是否在跑（失败静默，下个周期重试）。 */
+async function devicePing() {
+  const settings = readBackendSettings();
+  if (!settings.enabled) return { ok: false, skipped: true };
+  const ctx = clientContext();
+  try {
+    await postJson(joinUrl(settings.backendUrl, "/api/client/device/ping"), {
+      licenseKey: ctx.licenseKey,
+      usbId: ctx.usbId,
+      machineId: ctx.machineId,
+      hostname: ctx.hostname,
+      os: ctx.os,
+      arch: ctx.arch,
+      driveFs: ctx.driveFs,
+      clientVersion: ctx.clientVersion,
+    }, timing.backend.eventTimeoutMs);
+    writeLog("backend device ping ok", { usbId: ctx.usbId });
+    return { ok: true };
+  } catch (error) {
+    writeLog("backend device ping failed", { error: error.message });
+    return { ok: false, error: error.message };
+  }
+}
+
 function normalizeProviders(remoteProviders) {
   if (!remoteProviders || typeof remoteProviders !== "object" || Array.isArray(remoteProviders)) return {};
   const out = {};
@@ -169,21 +195,51 @@ function normalizeProviders(remoteProviders) {
   return out;
 }
 
-/** 把后台模型配置合并进 openclaw.json（含默认模型与压缩保留下限兜底）。 */
+/** 后台下发 provider 的标记：后台不再下发时据此回收，避免配置里留幽灵条目。 */
+const BACKEND_PROVIDER_SOURCE = "backend";
+
+/** 判断某个 provider 是否来自后台下发（早期写入的没有标记，用后台必带的 requiresClientKey 兜底识别）。 */
+function isBackendProvider(provider) {
+  return Boolean(provider && typeof provider === "object" && (provider.source === BACKEND_PROVIDER_SOURCE || provider.requiresClientKey === true));
+}
+
+/** 把后台模型配置合并进 openclaw.json；后台已不下发的内置 provider 一并回收。 */
 function mergeRemoteModels(remote) {
   const config = readConfig();
   const providers = normalizeProviders(remote && remote.providers);
   const providerIds = Object.keys(providers);
-  if (!providerIds.length) return { changed: false, reason: "no providers returned" };
 
   config.models = config.models && typeof config.models === "object" ? config.models : {};
   config.models.providers = config.models.providers && typeof config.models.providers === "object" ? config.models.providers : {};
+
+  // 回收：曾经由后台写入、这次不再下发的 provider（含运营在后台关掉的）。
+  const removed = [];
+  for (const [id, provider] of Object.entries(config.models.providers)) {
+    if (providerIds.includes(id) || !isBackendProvider(provider)) continue;
+    delete config.models.providers[id];
+    removed.push(id);
+  }
+  if (!providerIds.length && !removed.length) return { changed: false, reason: "no providers returned" };
+
   for (const providerId of providerIds) {
-    config.models.providers[providerId] = { ...(config.models.providers[providerId] || {}), ...providers[providerId] };
+    config.models.providers[providerId] = {
+      ...(config.models.providers[providerId] || {}),
+      ...providers[providerId],
+      source: BACKEND_PROVIDER_SOURCE,
+    };
   }
 
   config.agents = config.agents && typeof config.agents === "object" ? config.agents : {};
   config.agents.defaults = config.agents.defaults && typeof config.agents.defaults === "object" ? config.agents.defaults : {};
+  if (removed.length) {
+    const current = String(config.agents.defaults.model || "");
+    if (removed.some((id) => current.startsWith(`${id}/`))) {
+      const fallbackProvider = Object.entries(config.models.providers).find(([, provider]) => Array.isArray(provider?.models) && provider.models.length);
+      config.agents.defaults.model = (remote && remote.defaultModel)
+        || (fallbackProvider ? `${fallbackProvider[0]}/${fallbackProvider[1].models[0].id}` : "");
+      writeLog("backend models removed; default model switched", { removed, model: config.agents.defaults.model });
+    }
+  }
   if (remote && remote.defaultModel && (remote.forceDefault || !config.agents.defaults.model)) {
     config.agents.defaults.model = remote.defaultModel;
   }
@@ -195,7 +251,14 @@ function mergeRemoteModels(remote) {
   if (!Number.isFinite(floor) || floor < 20000) config.agents.defaults.compaction.reserveTokensFloor = 20000;
 
   writeConfig(config);
-  return { changed: true, revision: remote && remote.revision, providerIds, defaultModel: remote && remote.defaultModel, forceDefault: Boolean(remote && remote.forceDefault) };
+  return {
+    changed: true,
+    revision: remote && remote.revision,
+    providerIds,
+    removed,
+    defaultModel: remote && remote.defaultModel,
+    forceDefault: Boolean(remote && remote.forceDefault),
+  };
 }
 
 /** 拉取后台模型配置并合并到本地；后台未配置时静默跳过。 */
@@ -226,6 +289,7 @@ async function syncBackendModels(reason) {
 
 module.exports = {
   checkBackendLicense,
+  devicePing,
   reportEvent,
   syncBackendModels,
 };

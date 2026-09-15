@@ -11,10 +11,13 @@ const modules = require("./services/modules");
 const license = require("./services/license");
 const processManager = require("./services/process-manager");
 const { checkBackendLicense, syncBackendModels } = require("./services/backend-client");
+const { readConfig, writeConfig } = require("./services/config-store");
 const { cleanupStaleProcesses } = require("./services/process-manager");
 const { startUsbWatch } = require("./services/usb-watch");
 const { appendWechatLoginLog } = require("./services/logs");
+const oauth = require("./services/oauth");
 const oauthListener = require("./services/oauth-listener");
+const keepalive = require("./services/keepalive");
 
 // macOS 26 GPU/字体渲染路径存在崩溃问题，仅 darwin 关闭硬件加速。
 if (process.platform === "darwin") {
@@ -90,6 +93,24 @@ async function bootSequence() {
   logLine("backend check done");
 
   await cleanupStaleProcesses();
+  logLine("stale cleanup done");
+  // 配置归一化回写一次：模型展示名的品牌前缀等约定在写入路径上补齐，
+  // 升级前写好的旧配置靠这一步在首次启动就生效。
+  try { writeConfig(readConfig()); } catch { /* 归一化失败不阻塞启动 */ }
+  // 后台预热：把 openclaw 组件的首次冷启动（实测约 1 分钟）挪到启动阶段，
+  // 用户还在走登录/模型步骤时二维码就已经备好，到 BOT 页不用再等。
+  try { if (processManager.prewarmWechatLogin({ warmup: true })) logLine("wechat login prewarmed"); } catch { /* 预热失败不阻塞启动 */ }
+  // 心跳与订阅令牌保活：后台"最近在线"保持新鲜，令牌轮换后自动回写 provider。
+  keepalive.start();
+  // 浏览器不允许网页关闭/跳回客户端，这里在授权成功时把客户端窗口唤到前台作为补偿。
+  oauth.onLoginSuccess(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+  logLine("keepalive started");
   createMainWindow();
 }
 
@@ -112,6 +133,9 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 登录/订阅要在浏览器里完成，本窗口被浏览器遮挡时若被节流，轮询会几乎停摆，
+      // 用户会看到"登录验证一直转圈""订购完成却不生效"，因此关闭后台节流。
+      backgroundThrottling: false,
     },
   });
 
@@ -132,14 +156,22 @@ function createMainWindow() {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    mainWindow.loadFile(path.join(__dirname, "..", "..", "out", "renderer", "index.html"));
+    mainWindow.loadFile(path.join(__dirname, "..", "..", "out", "renderer", "index.html"))
+      .catch((error) => logLine(`renderer load failed: ${error.message}`));
   }
-  mainWindow.once("ready-to-show", () => mainWindow && mainWindow.show());
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    logLine(`renderer gone: ${details.reason} exit=${details.exitCode}`);
+  });
+  mainWindow.once("ready-to-show", () => {
+    logLine("renderer ready");
+    mainWindow && mainWindow.show();
+  });
 }
 
 /** 退出收尾：停 OAuth 监听、清杀子进程树。 */
 async function gracefulExit() {
   isQuitting = true;
+  keepalive.stop();
   try { oauthListener.stop(); } catch { /* 监听器可能未启动 */ }
   try { await processManager.shutdownAll(); } catch { /* 退出路径尽力清理 */ }
 }

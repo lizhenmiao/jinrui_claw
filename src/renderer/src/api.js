@@ -32,6 +32,7 @@ export const desktopApi = {
     start: () => getBridge().gateway.start(),
     startWechatFirst: () => getBridge().gateway.startWechatFirst(),
     stop: () => getBridge().gateway.stop(),
+    restart: () => getBridge().gateway.restart(),
     status: () => getBridge().gateway.status(),
     openChat: () => getBridge().gateway.openChat(),
   },
@@ -55,12 +56,16 @@ export const desktopApi = {
   account: {
     login: () => getBridge().account.login(),
     status: () => getBridge().account.status(),
+    authResult: () => getBridge().account.authResult(),
+    cancelLogin: () => getBridge().account.cancelLogin(),
     refresh: () => getBridge().account.refresh(),
     logout: () => getBridge().account.logout(),
     subscription: () => getBridge().account.subscription(),
-    syncSubscriptionModel: () => getBridge().account.syncSubscriptionModel(),
+    subscriptionModels: () => getBridge().account.subscriptionModels(),
+    syncSubscriptionModel: (modelId) => getBridge().account.syncSubscriptionModel(modelId),
   },
   channels: {
+    summary: () => getBridge().channels.summary(),
     wecom: {
       load: () => getBridge().channels.wecom.load(),
       save: (input) => getBridge().channels.wecom.save(input),
@@ -70,6 +75,7 @@ export const desktopApi = {
       save: (input) => getBridge().channels.feishu.save(input),
       pairing: () => getBridge().channels.feishu.pairing(),
       approvePairing: (code) => getBridge().channels.feishu.approvePairing(code),
+      revokeUser: (userId) => getBridge().channels.feishu.revokeUser(userId),
       setDmPolicy: (policy) => getBridge().channels.feishu.setDmPolicy(policy),
     },
     dingtalkChannel: {
@@ -77,7 +83,9 @@ export const desktopApi = {
       save: (input) => getBridge().channels.dingtalkChannel.save(input),
     },
     wechat: {
-      login: () => getBridge().channels.wechat.login(),
+      login: (options) => getBridge().channels.wechat.login(options),
+      prewarm: () => getBridge().channels.wechat.prewarm(),
+      warmup: () => getBridge().channels.wechat.warmup(),
       status: () => getBridge().channels.wechat.status(),
     },
     qq: {

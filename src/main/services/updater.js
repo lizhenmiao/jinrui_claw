@@ -10,6 +10,7 @@ const { app } = require("electron");
 const { getPaths } = require("../paths");
 const { getAppConfig } = require("../app-config");
 const { getUsbId } = require("./fingerprint");
+const timing = require("../../shared/timing.json");
 const { reportEvent } = require("./backend-client");
 
 function backendUrl() {
@@ -28,7 +29,7 @@ function joinUrl(base, pathname) {
   return String(base || "").replace(/\/+$/, "") + pathname;
 }
 
-async function postJson(url, body, timeoutMs = 10000) {
+async function postJson(url, body, timeoutMs = timing.update.requestTimeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

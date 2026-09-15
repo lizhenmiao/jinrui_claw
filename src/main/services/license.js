@@ -11,16 +11,27 @@ const { getPaths } = require("../paths");
 const { getFingerprint, mask } = require("./fingerprint");
 
 const LICENSE_VERSION = 1;
-const LICENSE_FILE = "license.dat";
 // 授权签名密钥内置于客户端，用于离线校验授权文件完整性。
 const LICENSE_SECRET = "xlx-openclaw-usb-license-v1-20260715";
 
+/** 授权文件路径（data/license.json）。 */
 function licensePath() {
-  return path.join(getPaths().productRoot, LICENSE_FILE);
+  return getPaths().licensePath;
 }
 
 function fileExists(file) {
   try { return fs.existsSync(file); } catch { return false; }
+}
+
+/** 把根目录旧版 license.dat 迁移到 data/license.json（仅首次）。 */
+function migrateLegacyLicense() {
+  const { licensePath: target, legacyLicensePath: legacy } = getPaths();
+  try {
+    if (fileExists(target) || !fileExists(legacy)) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(legacy, target);
+    fs.rmSync(legacy, { force: true });
+  } catch { /* 迁移失败时仍按缺失处理，可重新绑定 */ }
 }
 
 /** 打包副本必须持有与当前 U 盘指纹匹配的授权；开发模式跳过。 */
@@ -57,6 +68,7 @@ function readLicense(filePath) {
 /** 为当前 U 盘生成授权文件（母本与客户副本统一走此绑定）。 */
 function bindUsb() {
   const { productRoot } = getPaths();
+  migrateLegacyLicense();
   const fp = getFingerprint();
   const payload = {
     product: "ZgyClaw USB",
@@ -75,6 +87,7 @@ function bindUsb() {
 
 /** 校验当前 U 盘授权；失败返回带 code 的结果，由启动链决定是否放行。 */
 function verify() {
+  migrateLegacyLicense();
   const filePath = licensePath();
   try {
     if (!fileExists(filePath)) {
@@ -104,7 +117,7 @@ function verify() {
 
 /** 授权文件摘要信息（供售后信息展示）。 */
 function readLicenseSummary() {
-  const candidates = [licensePath(), path.join(getPaths().dataDir, "license.json")];
+  const candidates = [licensePath()];
   for (const file of candidates) {
     try {
       if (!fileExists(file)) continue;

@@ -50,6 +50,7 @@ function getPublicConfig() {
   return {
     product: config.product,
     ports: config.ports,
+    channels: { docs: config.channels?.docs || {} },
     oauth: {
       authorizationOrigin: config.oauth.authorizationOrigin,
       redirectUri: config.oauth.redirectUri,
@@ -57,6 +58,7 @@ function getPublicConfig() {
     },
     models: config.models,
     subscription: config.subscription,
+    ui: config.ui,
   };
 }
 

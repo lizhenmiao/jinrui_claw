@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build:renderer": "vite build",
-    "dist:win": "npm run build:renderer && electron-builder --win portable --x64 --publish never",
-    "dist:mac": "npm run build:renderer && electron-builder --mac dmg --arm64 --publish never"
+    "dist:win": "node scripts/dist.mjs --win",
+    "dist:mac": "node scripts/dist.mjs --mac"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",
@@ -34,8 +34,10 @@
     "files": [
       "src/main/**",
       "src/preload/**",
+      "src/shared/**",
       "out/renderer/**",
-      "package.json"
+      "package.json",
+      "node_modules/bytenode/**"
     ],
     "extraResources": [
       {
@@ -71,5 +73,8 @@
       "identity": null,
       "artifactName": "小龙虾macOS版.${ext}"
     }
+  },
+  "dependencies": {
+    "bytenode": "^1.5.7"
   }
 }

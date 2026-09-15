@@ -4,7 +4,7 @@
  */
 const crypto = require("crypto");
 const path = require("path");
-const { execFile } = require("child_process");
+const { execFileSync } = require("child_process");
 const { getPaths } = require("../paths");
 
 const PRODUCT_SALT = "zgy-openclaw-portable-v1";
@@ -86,17 +86,19 @@ function readMacDriveInfo(mountRoot) {
   }
 }
 
+let cachedDriveInfo = null;
+/** 读取 U 盘信息；Windows 下要起 PowerShell，进程生命周期内缓存一份（拔盘即退出应用，不会读到旧值）。 */
 function readDriveInfo() {
+  if (cachedDriveInfo) return cachedDriveInfo;
   const root = driveRoot();
   if (process.platform === "win32") {
-    const info = readWindowsDriveInfo(root);
-    return { platform: "win32", root, ...info };
+    cachedDriveInfo = { platform: "win32", root, ...readWindowsDriveInfo(root) };
+  } else if (process.platform === "darwin") {
+    cachedDriveInfo = { platform: "darwin", root, ...readMacDriveInfo(root.endsWith(":") ? root : root || "/") };
+  } else {
+    cachedDriveInfo = { platform: process.platform, root, volumeSerial: "" };
   }
-  if (process.platform === "darwin") {
-    const info = readMacDriveInfo(root.endsWith(":") ? root : root || "/");
-    return { platform: "darwin", root, ...info };
-  }
-  return { platform: process.platform, root, volumeSerial: "" };
+  return cachedDriveInfo;
 }
 
 function canonicalDriveIdentity(info) {
@@ -130,4 +132,4 @@ function getUsbId() {
   return `DEV-${crypto.createHash("sha256").update(driveRoot()).digest("hex").slice(0, 16).toUpperCase()}`;
 }
 
-module.exports = { getFingerprint, getUsbId, mask };
+module.exports = { getDriveInfo: readDriveInfo, getFingerprint, getUsbId, mask };

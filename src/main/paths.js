@@ -48,11 +48,15 @@ function build() {
     configPath: path.join(stateDir, "openclaw.json"),
     dingtalkChannelConfigPath: path.join(dataDir, "dingtalk-channel.json"),
     modulesCacheDir: path.join(resolveLocalCacheRoot(), cacheKey, "node_modules"),
+    // 按需安装的 payload 包目录（登记表见 services/modules.js 的 PAYLOADS）。
+    payloadDir: path.join(resourcesDir, "payload"),
     payloadArchive: path.join(resourcesDir, "payload", "openclaw-modules.tar.gz"),
-    qqbotPayloadZip: path.join(resourcesDir, "payload", "qqbot-node_modules.zip"),
     pluginsDir: path.join(resourcesDir, "plugins"),
     bridgeDir: path.join(resourcesDir, "bridge"),
     updateDir: path.join(dataDir, "update"),
+    // 授权文件与其它运行期文件统一放在 data 下；根目录旧文件在首次读取时自动迁移。
+    licensePath: path.join(dataDir, "license.json"),
+    legacyLicensePath: path.join(productRoot, "license.dat"),
     executablePath: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath("exe"),
     isPackaged: app.isPackaged,
   };

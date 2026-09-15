@@ -6,6 +6,7 @@
 const http = require("http");
 const { URL } = require("url");
 const { getAppConfig } = require("../app-config");
+const timing = require("../../shared/timing.json");
 const oauth = require("./oauth");
 
 let server = null;
@@ -19,12 +20,14 @@ function callbackPort() {
   }
 }
 
-/** 页面 HTML 模板：提示用户返回客户端。 */
+/** 页面模板：统一走 oauth 的品牌化卡片（登录回调场景默认失败样式）。 */
 function pageHtml(title, message) {
-  return `<html><body style="font-family:sans-serif;text-align:center;padding-top:80px"><h2>${title}</h2><p>${message}</p><p>可以关闭此页面并返回小龙虾。</p></body></html>`;
+  return oauth.brandPage(title, message, false);
 }
 
 function start() {
+  // 已在监听时直接复用，避免重复 listen 造成端口占用错误。
+  if (server) return Promise.resolve(callbackPort());
   return new Promise((resolve, reject) => {
     const port = callbackPort();
     server = http.createServer(async (req, res) => {
@@ -38,12 +41,12 @@ function start() {
       try {
         result = await oauth.handleCallback(Object.fromEntries(url.searchParams.entries()));
       } catch (error) {
-        result = { ok: false, html: pageHtml("登录失败", String(error.message || "OAuth 服务请求失败").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c])) };
+        result = { ok: false, html: pageHtml("登录失败", String(error.message || "OAuth 服务请求失败")) };
       }
       res.writeHead(result.ok ? 200 : 400, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(result.html);
       // 回调只消费一次，处理完成即关闭监听。
-      setTimeout(stop, 500);
+      setTimeout(stop, timing.oauth.callbackStopDelayMs);
     });
     server.once("error", (error) => {
       server = null;

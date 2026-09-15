@@ -1,0 +1,60 @@
+{
+  "note": "轮询间隔与超时的唯一来源：主进程与渲染层都从这里取值，业务文件里不再写死数值；改节奏只改这里。",
+  "boot": {
+    "warmupTimeoutMs": 120000
+  },
+  "login": {
+    "pollIntervalMs": 1500,
+    "waitTimeoutMs": 120000
+  },
+  "subscription": {
+    "pollIntervalMs": 2000
+  },
+  "qrSession": {
+    "regenerateCooldownMs": 15000,
+    "maxAutoRegenerate": 3
+  },
+  "wechatScan": {
+    "pollIntervalMs": 1500,
+    "qrWaitTimeoutMs": 90000,
+    "qrReuseWindowMs": 60000
+  },
+  "qqBind": {
+    "pollIntervalMs": 1500,
+    "qrWaitTimeoutMs": 15000
+  },
+  "channels": {
+    "statusRefreshIntervalMs": 3000
+  },
+  "gateway": {
+    "startProbeIntervalMs": 1500,
+    "startWaitTimeoutMs": 45000,
+    "portProbeIntervalMs": 400,
+    "stopTimeoutMs": 8000,
+    "restartSettleMs": 1200,
+    "statusRefreshIntervalMs": 6000
+  },
+  "usbWatch": {
+    "checkIntervalMs": 2000
+  },
+  "oauth": {
+    "tokenRefreshAheadMs": 900000,
+    "tokenCheckIntervalMs": 600000,
+    "callbackStopDelayMs": 500
+  },
+  "backend": {
+    "requestTimeoutMs": 8000,
+    "eventTimeoutMs": 5000,
+    "heartbeatIntervalMs": 300000
+  },
+  "update": {
+    "requestTimeoutMs": 10000,
+    "quitDelayMs": 800
+  },
+  "dingtalkBridge": {
+    "startDelayMs": 3000
+  },
+  "processWarden": {
+    "checkIntervalMs": 1500
+  }
+}

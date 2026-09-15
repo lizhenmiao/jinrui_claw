@@ -5,8 +5,8 @@
 const fs = require("fs");
 const path = require("path");
 const { getPaths } = require("../paths");
+const timing = require("../../shared/timing.json");
 
-const CHECK_INTERVAL_MS = 2000;
 const SENTINEL_FILE = ".usb-present";
 let timer = null;
 let onRemoved = null;
@@ -51,7 +51,7 @@ function startUsbWatch(callback) {
       stopUsbWatch();
       handler();
     }
-  }, CHECK_INTERVAL_MS);
+  }, timing.usbWatch.checkIntervalMs);
   return stopUsbWatch;
 }
 

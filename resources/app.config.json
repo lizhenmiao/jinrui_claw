@@ -6,9 +6,19 @@
     "channel": "product-ui",
     "release": "stable"
   },
+  "ui": {
+    "toastPosition": "top-right"
+  },
   "ports": {
     "gateway": 18789,
     "oauthCallback": 18790
+  },
+  "channels": {
+    "docs": {
+      "wecom": "https://open.work.weixin.qq.com/help2/pc/21677",
+      "feishu": "https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-app-id",
+      "dingtalk-channel": "https://open.dingtalk.com/document/dingstart/create-application"
+    }
   },
   "backend": {
     "url": "http://111.6.204.34:6005",
@@ -18,7 +28,7 @@
   },
   "oauth": {
     "issuer": "http://192.168.0.73:8080",
-    "authorizationOrigin": "http://192.168.0.73:5173",
+    "authorizationOrigin": "http://192.168.0.73:8080",
     "clientId": "jr_client_5730df3e-901",
     "clientSecret": "jr_secret_WdjZdNVOwIN4DljdwfTqCswiwiEAFUfwp6-dINX2DG8",
     "clientType": "confidential",
@@ -71,7 +81,7 @@
     }
   },
   "subscription": {
-    "plansPageSuffix": "#plans",
+    "plansPageSuffix": "coding-plan",
     "plans": [
       { "name": "Lite plan", "price": "¥ 39.90", "period": "/ 月", "desc": "会员周期内容 ZgyClaw 持续可用", "popular": false },
       { "name": "Lite plan", "price": "¥ 99.90", "period": "/ 月", "desc": "会员周期内容 ZgyClaw 持续可用", "popular": true },
