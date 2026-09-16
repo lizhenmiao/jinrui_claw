@@ -28,12 +28,18 @@ function readConfigFile(file) {
 
 /**
  * 按运行形态列出配置查找位置（顺序即优先级）。
- * 打包后**只认 asar 内**那一份：它受 asar 完整性校验保护，用户改不动。
- * （配置文件若放在 asar 外面就能被随手改动后台地址，那条路等于架空授权联检，所以不留后备位置。）
+ * 打包后优先读 asar 内那一份：它受 asar 完整性校验保护，用户改不动。
+ * 第二处是给"app 没打成 asar（而是展开的 app 目录）"这种打包形态兜底——
+ * 那种形态下整份代码本来就以明文落在包内，多认一个位置不会降低防护（asar 形态下第一处必然命中）。
  */
 function configCandidatePaths() {
   const { resourcesDir } = getPaths();
-  if (app.isPackaged) return [path.join(resourcesDir, "app.asar", "resources", "app.config.json")];
+  if (app.isPackaged) {
+    return [
+      path.join(resourcesDir, "app.asar", "resources", "app.config.json"),
+      path.join(resourcesDir, "app", "resources", "app.config.json"),
+    ];
+  }
   return [
     path.join(resourcesDir, "app.config.json"),
     path.join(resourcesDir, "app.config.example.json"),

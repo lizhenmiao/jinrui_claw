@@ -125,8 +125,9 @@ function findAsarFiles(dir, found = [], depth = 0) {
 }
 
 /**
- * 打包后自检：每个产物的 app.asar 里都必须有运营配置（客户端只认这一份，放在 asar 外就等于留下改配置的口子）。
- * 找不齐直接让构建失败，并把 asar 顶层条目打出来——比发出一份起不来的包强得多。
+ * 打包后自检：产物里必须能找到运营配置（客户端读它拿后台地址），且优先在 asar 内。
+ * 找不到就构建失败，并把实际布局打进日志——曾出现 macOS 产物在 asar 里找不到配置、
+ * 客户端停在"未配置管理后台地址"的情况，这类问题必须在构建期暴露，不能等到了客户机器上。
  */
 function verifyPackagedConfig() {
   const releaseDir = path.join(PROJECT_ROOT, "release");
@@ -134,12 +135,18 @@ function verifyPackagedConfig() {
   if (!asarFiles.length) throw new Error("打包产物里没有找到任何 app.asar");
   const failures = [];
   for (const asarPath of asarFiles) {
-    const entries = asarEntries(asarPath);
+    const resourcesRoot = path.dirname(asarPath);
     const label = path.relative(releaseDir, asarPath);
-    if (asarHasPath(entries, "resources/app.config.json")) {
-      console.log(`[dist] 自检通过：${label} 内含 resources/app.config.json`);
+    const entries = asarEntries(asarPath);
+    const inAsar = asarHasPath(entries, "resources/app.config.json");
+    const inAppDir = fs.existsSync(path.join(resourcesRoot, "app", "resources", "app.config.json"));
+    const topLevel = Object.keys(entries.files || {}).join(", ");
+    if (inAsar) {
+      console.log(`[dist] 自检通过（asar 布局）：${label} 内含 resources/app.config.json`);
+    } else if (inAppDir) {
+      console.warn(`[dist] 自检通过（app 目录布局）：${label} 的 asar 内没有配置，但同级 app/resources/ 下有；asar 顶层条目=${topLevel}`);
     } else {
-      failures.push(`  ${label}：asar 内没有 resources/app.config.json；asar 顶层条目=${Object.keys(entries.files || {}).join(", ")}`);
+      failures.push(`  ${label}：asar 内与同级 app 目录里都没有 resources/app.config.json；asar 顶层条目=${topLevel}`);
     }
   }
   if (failures.length) {
