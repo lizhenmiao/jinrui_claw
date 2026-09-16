@@ -82,6 +82,78 @@ async function moveDir(from, to) {
   }
 }
 
+/**
+ * 读 app.asar 的文件表（asar 头部是 JSON 目录表：16 字节头 + 该 JSON）。
+ * 用于打包后确认运营配置真的进了包——macOS 上曾出现配置没进 asar、客户端起不来的情况，
+ * 这类问题必须在构建期就暴露，不能等到了客户机器上才发现。
+ */
+function asarEntries(asarPath) {
+  const fd = fs.openSync(asarPath, "r");
+  try {
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    const jsonSize = header.readUInt32LE(12);
+    const json = Buffer.alloc(jsonSize);
+    fs.readSync(fd, json, 0, jsonSize, 16);
+    return JSON.parse(json.toString("utf8"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** 在 asar 目录表里按路径查条目是否存在。 */
+function asarHasPath(entries, relativePath) {
+  let node = entries;
+  for (const segment of relativePath.split("/")) {
+    if (!node || typeof node !== "object") return false;
+    node = node.files?.[segment];
+  }
+  return Boolean(node);
+}
+
+/** 递归找出产物目录下所有 app.asar（Windows 目录版与 mac 的 .app 各在不同层级）。 */
+function findAsarFiles(dir, found = [], depth = 0) {
+  if (depth > 6) return found;
+  let children = [];
+  try { children = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+  for (const child of children) {
+    const full = path.join(dir, child.name);
+    if (child.isDirectory()) findAsarFiles(full, found, depth + 1);
+    else if (child.name === "app.asar") found.push(full);
+  }
+  return found;
+}
+
+/**
+ * 打包后自检：产物里必须能找到运营配置（客户端读它拿后台地址），且优先在 asar 内。
+ * 找不到就构建失败，并把实际布局打进日志——曾出现 macOS 产物在 asar 里找不到配置、
+ * 客户端停在"未配置管理后台地址"的情况，这类问题必须在构建期暴露，不能等到了客户机器上。
+ */
+function verifyPackagedConfig() {
+  const releaseDir = path.join(PROJECT_ROOT, "release");
+  const asarFiles = findAsarFiles(releaseDir);
+  if (!asarFiles.length) throw new Error("打包产物里没有找到任何 app.asar");
+  const failures = [];
+  for (const asarPath of asarFiles) {
+    const resourcesRoot = path.dirname(asarPath);
+    const label = path.relative(releaseDir, asarPath);
+    const entries = asarEntries(asarPath);
+    const inAsar = asarHasPath(entries, "resources/app.config.json");
+    const inAppDir = fs.existsSync(path.join(resourcesRoot, "app", "resources", "app.config.json"));
+    const topLevel = Object.keys(entries.files || {}).join(", ");
+    if (inAsar) {
+      console.log(`[dist] 自检通过（asar 布局）：${label} 内含 resources/app.config.json`);
+    } else if (inAppDir) {
+      console.warn(`[dist] 自检通过（app 目录布局）：${label} 的 asar 内没有配置，但同级 app/resources/ 下有；asar 顶层条目=${topLevel}`);
+    } else {
+      failures.push(`  ${label}：asar 内与同级 app 目录里都没有 resources/app.config.json；asar 顶层条目=${topLevel}`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(`打包产物缺少运营配置（客户端会停在"未配置管理后台地址"）：\n${failures.join("\n")}\n请检查 package.json 的 build.files 是否包含 resources/app.config.json。`);
+  }
+}
+
 /** Windows 目录形态收尾：win-unpacked 更名为 zgyclaw 并压成交付 zip（解压到 U 盘双击即启动）。 */
 async function packageWinDir() {
   const releaseDir = path.join(PROJECT_ROOT, "release");
@@ -159,9 +231,11 @@ backupSources();
 try {
   await compileBytecode();
   exitCode = await runBuilder(target === "--win" ? "win" : "mac");
-  if (exitCode === 0 && target === "--win") {
+  if (exitCode === 0) {
     try {
-      await packageWinDir();
+      // 先自检产物里的运营配置，再收尾改名/压缩——带着问题收尾只会发出去一份起不来的包。
+      verifyPackagedConfig();
+      if (target === "--win") await packageWinDir();
     } catch (error) {
       console.error(`[dist] ${error.message}`);
       exitCode = 1;

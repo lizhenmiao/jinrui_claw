@@ -26,11 +26,19 @@ function readConfigFile(file) {
   }
 }
 
-/** 按运行形态列出配置查找位置（顺序即优先级）。 */
+/**
+ * 按运行形态列出配置查找位置（顺序即优先级）。
+ * 打包后优先读 asar 内那一份：它受 asar 完整性校验保护，用户改不动。
+ * 第二处是给"app 没打成 asar（而是展开的 app 目录）"这种打包形态兜底——
+ * 那种形态下整份代码本来就以明文落在包内，多认一个位置不会降低防护（asar 形态下第一处必然命中）。
+ */
 function configCandidatePaths() {
   const { resourcesDir } = getPaths();
   if (app.isPackaged) {
-    return [path.join(resourcesDir, "app.asar", "resources", "app.config.json")];
+    return [
+      path.join(resourcesDir, "app.asar", "resources", "app.config.json"),
+      path.join(resourcesDir, "app", "resources", "app.config.json"),
+    ];
   }
   return [
     path.join(resourcesDir, "app.config.json"),
@@ -38,23 +46,29 @@ function configCandidatePaths() {
   ];
 }
 
-/** 读不到配置时给出一行现场信息：实际探测了哪些路径、是否存在、运行环境是什么。 */
+/** 读不到配置时给出一行现场信息：探测了哪些路径、resources 目录里有什么、运行环境是什么。 */
 function configLookupHint() {
+  const { resourcesDir } = getPaths();
   const probed = configCandidatePaths()
     .map((file) => `${file}（${fs.existsSync(file) ? "存在" : "不存在"}）`)
     .join("；");
-  return `已查找：${probed}；isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`;
+  let listing = "";
+  try {
+    listing = `；resources 目录内容：${fs.readdirSync(resourcesDir).slice(0, 12).join(", ") || "(空)"}`;
+  } catch (error) {
+    listing = `；resources 目录读取失败：${error.message}`;
+  }
+  return `已查找：${probed}${listing}；isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`;
 }
 
-/** 读取完整配置（含敏感字段），仅限主进程内部使用。 */
+/** 读取完整配置（含敏感字段），仅限主进程内部使用；按候选顺序取第一个读得到的。 */
 function getAppConfig() {
   if (!cached) {
-    const candidates = configCandidatePaths();
-    if (app.isPackaged) {
-      cached = readConfigFile(candidates[0]) || {};
-    } else {
-      cached = readConfigFile(candidates[0]) || readConfigFile(candidates[1]) || {};
+    for (const candidate of configCandidatePaths()) {
+      const parsed = readConfigFile(candidate);
+      if (parsed) { cached = parsed; break; }
     }
+    cached = cached || {};
   }
   return cached;
 }
