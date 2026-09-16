@@ -40,7 +40,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-portable
-          path: release/zgyclaw-windows-amd64.zip
+          path: release/zgyclaw-windows-amd64-*.zip
           if-no-files-found: error
       - name: 发布到 Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -50,7 +50,7 @@ jobs:
         run: |
           # 两平台并行往同一 Release 发资产会有竞争：不存在就建、存在就补传，失败重试兜底。
           tag="${GITHUB_REF_NAME}"
-          pattern="release/zgyclaw-windows-amd64.zip"
+          pattern="release/zgyclaw-windows-amd64-*.zip"
           for attempt in 1 2 3 4 5; do
             gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --generate-notes >/dev/null 2>&1 || true
             if gh release upload "$tag" $pattern --clobber; then

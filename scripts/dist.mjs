@@ -171,12 +171,17 @@ function verifyPackagedConfig() {
   }
 }
 
+/** 产物名里的版本号：取 package.json 的 version，本地与 CI 单一来源。 */
+function projectVersion() {
+  return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8")).version;
+}
+
 /** Windows 目录形态收尾：win-unpacked 更名为 zgyclaw 并压成交付 zip（解压到 U 盘双击即启动）。 */
 async function packageWinDir() {
   const releaseDir = path.join(PROJECT_ROOT, "release");
   const unpacked = path.join(releaseDir, "win-unpacked");
   const appDir = path.join(releaseDir, "zgyclaw");
-  const zipPath = path.join(releaseDir, "zgyclaw-windows-amd64.zip");
+  const zipPath = path.join(releaseDir, `zgyclaw-windows-amd64-${projectVersion()}.zip`);
   if (!fs.existsSync(unpacked)) throw new Error("打包产物目录缺失：release/win-unpacked");
   fs.rmSync(appDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
   await moveDir(unpacked, appDir);
