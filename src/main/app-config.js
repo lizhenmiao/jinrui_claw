@@ -26,16 +26,34 @@ function readConfigFile(file) {
   }
 }
 
+/** 按运行形态列出配置查找位置（顺序即优先级）。 */
+function configCandidatePaths() {
+  const { resourcesDir } = getPaths();
+  if (app.isPackaged) {
+    return [path.join(resourcesDir, "app.asar", "resources", "app.config.json")];
+  }
+  return [
+    path.join(resourcesDir, "app.config.json"),
+    path.join(resourcesDir, "app.config.example.json"),
+  ];
+}
+
+/** 读不到配置时给出一行现场信息：实际探测了哪些路径、是否存在、运行环境是什么。 */
+function configLookupHint() {
+  const probed = configCandidatePaths()
+    .map((file) => `${file}（${fs.existsSync(file) ? "存在" : "不存在"}）`)
+    .join("；");
+  return `已查找：${probed}；isPackaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`;
+}
+
 /** 读取完整配置（含敏感字段），仅限主进程内部使用。 */
 function getAppConfig() {
   if (!cached) {
-    const { resourcesDir } = getPaths();
+    const candidates = configCandidatePaths();
     if (app.isPackaged) {
-      cached = readConfigFile(path.join(resourcesDir, "app.asar", "resources", "app.config.json")) || {};
+      cached = readConfigFile(candidates[0]) || {};
     } else {
-      cached = readConfigFile(path.join(resourcesDir, "app.config.json"))
-        || readConfigFile(path.join(resourcesDir, "app.config.example.json"))
-        || {};
+      cached = readConfigFile(candidates[0]) || readConfigFile(candidates[1]) || {};
     }
   }
   return cached;
@@ -53,4 +71,4 @@ function getPublicConfig() {
   };
 }
 
-module.exports = { getAppConfig, getPublicConfig };
+module.exports = { getAppConfig, getPublicConfig, configLookupHint };

@@ -6,7 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { getPaths } = require("../paths");
-const { getAppConfig } = require("../app-config");
+const { getAppConfig, configLookupHint } = require("../app-config");
 const { getUsbId, getDriveInfo, getMachineId } = require("./fingerprint");
 const { boundLicenseKey } = require("./license");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
@@ -53,9 +53,11 @@ function readBackendSettings() {
  */
 function requireBackendSettings(override = {}) {
   const settings = readBackendSettings();
-  if (!settings.backendUrl) throw new Error("未配置管理后台地址（app.config.json 的 backend.url）。");
+  if (!settings.backendUrl) {
+    throw new Error(`未配置管理后台地址（app.config.json 的 backend.url）。\n${configLookupHint()}`);
+  }
   const licenseKey = String(override.licenseKey || settings.licenseKey).trim();
-  if (!licenseKey) throw new Error("本 U 盘未绑定授权码，请执行 zgyclaw.exe --bind-usb --license 你的授权码。");
+  if (!licenseKey) throw new Error("本 U 盘未绑定授权码，请执行 zgyclaw.exe --bind-usb --license 你的授权码。\n（Windows 是 zgyclaw.exe，macOS 是 小龙虾U盘版.app/Contents/MacOS/zgyclaw）");
   return { ...settings, licenseKey };
 }
 
