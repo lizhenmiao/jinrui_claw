@@ -143,7 +143,14 @@ async function runCliCommand() {
  * onStage 把当前阶段推给加载页：解压与首次预热合起来要一两分钟，逐步说明在做什么，用户才不是白等。
  */
 async function bootCore(onStage) {
-  const { logsDir } = getPaths();
+  const { dataDir, logsDir } = getPaths();
+  // 产品目录不可写时给出明确原因，而不是让后续 mkdir 抛一个看不懂的 EACCES：
+  // macOS 上用户常把 App 拖进 /Applications，那里建 data/ 需要管理员权限，数据也就没法随盘走。
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (error) {
+    throw new Error(`无法在程序所在目录写入数据（${dataDir}）：${error.message}\n\n请把程序放在 U 盘目录里运行，不要单独放进 /Applications。`);
+  }
   fs.mkdirSync(logsDir, { recursive: true });
 
   // 必须 await：子进程启动要用解压后的模块目录，不等就会拿着未就绪的缓存往下走。

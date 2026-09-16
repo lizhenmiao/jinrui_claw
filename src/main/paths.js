@@ -11,12 +11,20 @@ const { app } = require("electron");
 
 let cached = null;
 
-/** portable 包运行时由自解压器注入 PORTABLE_EXECUTABLE_DIR，开发模式回落到工程根目录。 */
+/**
+ * 产品根目录：运行期文件都写在这里的 data/ 下，随 U 盘插拔迁移。
+ * - 便携自解压运行时由 PORTABLE_EXECUTABLE_DIR 指定；
+ * - Windows 目录分发：可执行文件所在目录（zgyclaw 文件夹）；
+ * - macOS：可执行文件在 App.app/Contents/MacOS/ 里，根目录要取 App 所在的那一层，
+ *   这样 data/ 与 App 并列（对应 Windows 的 zgyclaw/data/），而不是被写进 App 包内部。
+ */
 function resolveProductRoot() {
   const portableDir = String(process.env.PORTABLE_EXECUTABLE_DIR || "").trim();
   if (portableDir) return path.resolve(portableDir);
-  if (app.isPackaged) return path.dirname(app.getPath("exe"));
-  return path.resolve(__dirname, "..", "..");
+  if (!app.isPackaged) return path.resolve(__dirname, "..", "..");
+  const exeDir = path.dirname(app.getPath("exe"));
+  if (process.platform === "darwin") return path.resolve(exeDir, "..", "..", "..");
+  return exeDir;
 }
 
 /** 模块缓存根目录：Windows 放本地应用数据，macOS 放用户应用支持目录。 */
@@ -47,11 +55,12 @@ function build() {
   const productRoot = resolveProductRoot();
   const dataDir = path.join(productRoot, "data");
   const stateDir = path.join(dataDir, ".openclaw");
-  // electron-builder extraResources 落在 <安装目录>/resources/；
-  // portable 自解压临时目录里的 process.resourcesPath 同样指向该层级。
+  // 打包后资源目录用 Electron 给的 process.resourcesPath：
+  // Windows 目录分发下它就是 <安装目录>/resources（与按可执行文件目录推导等价），
+  // macOS 下是 App.app/Contents/Resources——按可执行文件所在目录去找会落在 Contents/MacOS 里，找不到 app.asar 与 extraResources。
   // 开发模式资源位于工程根目录的 resources/。
   const resourcesDir = app.isPackaged
-    ? path.resolve(path.dirname(app.getPath("exe")), "resources")
+    ? process.resourcesPath
     : path.join(productRoot, "resources");
   const payloadDir = path.join(resourcesDir, "payload");
   const payloadArchive = path.join(payloadDir, "openclaw-modules.tar.gz");
