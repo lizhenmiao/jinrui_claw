@@ -42,27 +42,46 @@ function readWecomConfig() {
 }
 
 /**
- * 安装企业微信官方插件（openclaw 官方安装布局）：payload 解压到 state 的 extensions 目录，openclaw 依赖按本机模块缓存重建链接——官方安装器就是这么做链接的，但链接目标含机器相关的缓存哈希，不随包分发，换机器激活时重建。
+ * 摘掉一个可能已存在的链接或目录。Windows 上 junction 是"目录型重解析点"：
+ * unlink 会失败、递归 rm 也可能报 EISDIR/EPERM，所以依次退让到 rmdir 才可靠
+ * （rmdir 只摘掉链接本身，不会动到它指向的缓存内容）。
  */
-function installWecomPlugin() {
-  const target = ensurePayload("wecom");
+function removeExistingEntry(target) {
+  try { fs.lstatSync(target); } catch { return; } // lstat 不跟随链接，断链也能看到；不存在就无需处理
+  const attempts = [
+    () => fs.unlinkSync(target),
+    () => fs.rmdirSync(target),
+    () => fs.rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+  ];
+  for (const attempt of attempts) {
+    try { attempt(); return; } catch { /* 换下一种摘法 */ }
+  }
+  throw new Error(`无法清理已存在的路径：${target}`);
+}
+
+/**
+ * 安装企业微信官方插件（openclaw 官方安装布局）：payload 解压到 state 的 extensions 目录，
+ * openclaw 依赖按本机模块缓存重建链接——官方安装器就是这么做链接的，但链接目标含机器相关的缓存哈希，不随包分发，换机器激活时重建。
+ * 异步：payload 里有几千个文件、目标目录常在 U 盘上（USB 随机写很慢），同步执行会让主进程长时间无响应。
+ * 链接每次重建：旧链接可能指向别的机器/已被删掉的缓存，留着就是坏的。
+ */
+async function installWecomPlugin() {
+  const target = await ensurePayload("wecom");
   if (!target) throw new Error("企业微信插件安装包缺失，请重新获取客户端更新包。");
   const linkPath = path.join(target, "node_modules", "openclaw");
-  if (!fs.existsSync(linkPath)) {
-    try { fs.rmSync(linkPath, { recursive: true, force: true }); } catch { /* 没有旧链接 */ }
-    fs.symlinkSync(path.join(getPaths().modulesCacheDir, "openclaw"), linkPath, "junction");
-  }
+  removeExistingEntry(linkPath);
+  fs.symlinkSync(path.join(getPaths().modulesCacheDir, "openclaw"), linkPath, "junction");
   return { ok: true, installed: true, target };
 }
 
-function writeWecomConfig(input) {
+async function writeWecomConfig(input) {
   const botId = typeof input.botId === "string" ? input.botId.trim() : "";
   const secret = typeof input.secret === "string" ? input.secret.trim() : "";
   const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "企业微信";
   const enabled = typeof input.enabled === "boolean" ? input.enabled : Boolean(botId && secret);
   if (enabled && (!botId || !secret)) throw new Error("启用企业微信需要同时填写 Bot ID 和 Secret");
 
-  installWecomPlugin();
+  await installWecomPlugin();
   const config = readConfig();
   config.plugins = config.plugins || {};
   config.plugins.entries = config.plugins.entries || {};
@@ -332,7 +351,7 @@ function channelPluginPath(bundledName, cacheSegments) {
  * 激活便携通道：登记插件路径并打开通道开关。
  * 返回配置是否发生变更。
  */
-function activatePortableChannel(channel) {
+async function activatePortableChannel(channel) {
   const config = readConfig();
   let changed = false;
   config.plugins = config.plugins || {};
@@ -357,7 +376,7 @@ function activatePortableChannel(channel) {
     config.plugins.entries.qqbot = { enabled: true };
     changed = changed || !entryWasEnabled;
   } else if (channel === "wecom") {
-    installWecomPlugin();
+    await installWecomPlugin();
     const entryWasEnabled = config.plugins.entries["wecom-openclaw-plugin"]?.enabled === true;
     config.plugins.entries["wecom-openclaw-plugin"] = { enabled: true };
     // extensions 目录发现的插件按 openclaw 建议显式加白名单（allow 为空时它会以告警方式自动加载）。
@@ -415,11 +434,11 @@ function activatePortableChannel(channel) {
 }
 
 /** 启动向导保存时的通道预载：微信优先，其余通道按已配置状态激活。 */
-function preloadChannelsForStart() {
+async function preloadChannelsForStart() {
   const changed = [];
-  try { if (activatePortableChannel("openclaw-weixin")) changed.push("openclaw-weixin"); } catch { /* 通道激活失败不阻塞启动 */ }
+  try { if (await activatePortableChannel("openclaw-weixin")) changed.push("openclaw-weixin"); } catch { /* 通道激活失败不阻塞启动 */ }
   for (const channel of ["wecom", "feishu", "openclaw-dingtalk-channel"]) {
-    try { if (activatePortableChannel(channel)) changed.push(channel); } catch { /* 单个通道失败不影响其余 */ }
+    try { if (await activatePortableChannel(channel)) changed.push(channel); } catch { /* 单个通道失败不影响其余 */ }
   }
   return changed;
 }
@@ -428,7 +447,7 @@ function preloadChannelsForStart() {
 
 async function installQQBotPlugin() {
   let installed = findQQBotPluginPaths().length > 0;
-  if (!installed) installed = Boolean(ensurePayload("qqbot"));
+  if (!installed) installed = Boolean(await ensurePayload("qqbot"));
   if (!installed) throw new Error("QQBot 插件安装包不存在，请重新获取客户端更新包。");
   const config = readConfig();
   for (const pluginPath of findQQBotPluginPaths()) ensurePluginLoadPath(config, pluginPath);

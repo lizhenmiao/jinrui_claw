@@ -3,7 +3,7 @@
  */
 const fs = require("fs");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const { getPaths } = require("../paths");
 
 /** 解压临时目录名前缀（后缀是进程号+时间戳），残留清理按它识别。 */
@@ -168,11 +168,30 @@ function isPayloadReady(name) {
   return fs.existsSync(path.join(entry.target(getPaths()), entry.manifest));
 }
 
+/** 跑一次系统 tar 解压（异步）：企业微信 payload 有几千个文件，同步跑会把主进程事件循环堵住。 */
+function runTar(args) {
+  return new Promise((resolve, reject) => {
+    const tarExecutable = process.platform === "win32"
+      ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
+      : "tar";
+    const child = spawn(tarExecutable, args, { windowsHide: true });
+    let stderrText = "";
+    child.stderr.on("data", (chunk) => { stderrText += String(chunk); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) reject(new Error(stderrText || `exit ${code}`));
+      else resolve();
+    });
+  });
+}
+
 /**
  * 确保某个 payload 已解压到目标目录，返回目标目录路径（失败返回空串）。
  * 解压到临时目录再整体拷贝，避免中途失败留下半个安装；已就位时直接返回。
+ * 全程异步：payload 里有几千个文件、目标目录又常在 U 盘上（USB 随机写很慢），
+ * 一旦同步执行，主进程会长时间无响应，界面上就是"点保存后卡死"。
  */
-function ensurePayload(name) {
+async function ensurePayload(name) {
   const entry = PAYLOADS[name];
   if (!entry) return "";
   const paths = getPaths();
@@ -186,24 +205,20 @@ function ensurePayload(name) {
   }
 
   const tmpDir = path.join(paths.payloadDir, `_payload-${name}-${process.pid}`);
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  fs.mkdirSync(tmpDir, { recursive: true });
+  await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  await fs.promises.mkdir(tmpDir, { recursive: true });
   try {
-    const tarExecutable = process.platform === "win32"
-      ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
-      : "tar";
     // -xf 对 tar / tar.gz / zip 都能自适应（Windows 的 bsdtar 支持 zip）。
-    const result = spawnSync(tarExecutable, ["-xf", archive, "-C", tmpDir], { windowsHide: true, timeout: 900000 });
-    if (result.status !== 0) throw new Error(`payload ${name} 解压失败: ${result.stderr || result.status}`);
+    await runTar(["-xf", archive, "-C", tmpDir]);
     if (!fs.existsSync(path.join(tmpDir, entry.manifest))) throw new Error(`payload ${name} 压缩包内容不完整`);
-    fs.mkdirSync(target, { recursive: true });
-    fs.cpSync(tmpDir, target, { recursive: true, force: true });
+    await fs.promises.mkdir(target, { recursive: true });
+    await fs.promises.cp(tmpDir, target, { recursive: true, force: true });
     log(`payload ${name} installed to ${target}`);
   } catch (error) {
     log(`payload ${name} install failed: ${error.message}`);
     return "";
   } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 临时目录清理失败无害 */ }
+    try { await fs.promises.rm(tmpDir, { recursive: true, force: true }); } catch { /* 临时目录清理失败无害 */ }
   }
   return isPayloadReady(name) ? target : "";
 }

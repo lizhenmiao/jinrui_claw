@@ -77,11 +77,11 @@ async function renderQrSvg(data) {
 
   // ---- 网关控制 ----
   ipcMain.handle("gateway:start", async () => {
-    channels.preloadChannelsForStart();
+    await channels.preloadChannelsForStart();
     return gateway.startGateway();
   });
   ipcMain.handle("gateway:startWechatFirst", async () => {
-    const changed = channels.preloadChannelsForStart();
+    const changed = await channels.preloadChannelsForStart();
     const result = await gateway.startGateway();
     return { ...result, changed };
   });
@@ -157,8 +157,8 @@ async function renderQrSvg(data) {
 
   // ---- 通道：企业微信 ----
   ipcMain.handle("channel:wecom:load", () => ({ config: channels.readWecomConfig() }));
-  ipcMain.handle("channel:wecom:save", (_event, input) => {
-    const config = channels.writeWecomConfig(input);
+  ipcMain.handle("channel:wecom:save", async (_event, input) => {
+    const config = await channels.writeWecomConfig(input);
     gateway.markConfigPendingRestart("wecom-config");
     return { ok: true, config };
   });
