@@ -78,7 +78,7 @@
       ],
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "zgyclaw-mac-${arch}.${ext}"
+      "artifactName": "zgyclaw-mac-${arch}-${version}.${ext}"
     }
   },
   "dependencies": {

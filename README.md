@@ -163,8 +163,8 @@ mvn spring-boot:run      # 看到 Tomcat started on port 15000 即成功
 ## 5. 打包
 
 ```bash
-npm run dist:win     # → release/zgyclaw-windows-amd64.zip（x64 目录形态，解压得 zgyclaw 文件夹）
-npm run dist:mac     # → release/zgyclaw-mac-{arm64,x64}.dmg（须在 macOS 上执行）
+npm run dist:win     # → release/zgyclaw-windows-amd64-<版本>.zip（x64 目录形态，解压得 zgyclaw 文件夹）
+npm run dist:mac     # → release/zgyclaw-mac-{arm64,x64}-<版本>.dmg（须在 macOS 上执行）
 ```
 
 Windows 用**目录分发**而不是单文件 portable：双击 1~2 秒出窗口，没有单文件每次自解压十几秒的等待；
@@ -183,7 +183,7 @@ electron-builder（Windows 构建后把 `win-unpacked` 更名 `zgyclaw` 压成�
 
 `.github/workflows/build.yml`：**手动触发**（Actions → 打包客户端 → Run workflow）或**推 `v*` 标签**
 自动构建。
-`windows-latest` 出 `zgyclaw-windows-amd64.zip`，`macos-latest` 出 `zgyclaw-mac-{arm64,x64}.dmg`；
+`windows-latest` 出 `zgyclaw-windows-amd64-<版本>.zip`，`macos-latest` 出 `zgyclaw-mac-{arm64,x64}-<版本>.dmg`；
 产物在该次运行的 Artifacts 里，**推标签的构建还会自动发到同一个标签的 Release**，正式分发走这条路。
 
 前置条件：仓库 Secret **`APP_CONFIG_JSON`** 必须存在（内容是整份线上 `app.config.json`），
@@ -208,7 +208,7 @@ U 盘根目录
 
 拷盘步骤：
 
-1. 解压 `zgyclaw-windows-amd64.zip`，把 `zgyclaw` 文件夹整个拷到 U 盘根目录（运营配置已固化在包内 asar，无需也无法在 U 盘上改地址）；
+1. 解压 `zgyclaw-windows-amd64-<版本>.zip`，把 `zgyclaw` 文件夹整个拷到 U 盘根目录（运营配置已固化在包内 asar，无需也无法在 U 盘上改地址）；
 2. 在管理后台新建一条授权码（一张盘一条）；
 3. 插到目标机器**双击 `zgyclaw.exe`**：加载页会显示"需要授权，请输入授权码"，把授权码填进去点「绑定并继续」即可
    （macOS 同理，双击 App 后在界面上填）；
