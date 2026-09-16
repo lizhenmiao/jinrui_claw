@@ -35,9 +35,11 @@ function readConfigFile(file) {
 function configCandidatePaths() {
   const { resourcesDir } = getPaths();
   if (app.isPackaged) {
+    // 打包时配置被暂存到 out/ 再打进 asar（macOS 上 resources/ 源目录不进 asar，out/ 才进）；
+    // 第二处是"app 没打成 asar、而是展开的 app 目录"这种形态的兜底。
     return [
-      path.join(resourcesDir, "app.asar", "resources", "app.config.json"),
-      path.join(resourcesDir, "app", "resources", "app.config.json"),
+      path.join(resourcesDir, "app.asar", "out", "app.config.json"),
+      path.join(resourcesDir, "app", "out", "app.config.json"),
     ];
   }
   return [
