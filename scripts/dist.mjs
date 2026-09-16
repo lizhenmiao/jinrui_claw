@@ -83,6 +83,23 @@ async function moveDir(from, to) {
 }
 
 /**
+ * 运营配置在包内的路径。
+ * 注意：不能放在 `resources/` 下——macOS 打包时整个 resources 源目录都不会进 asar
+ * （实测 mac 产物 asar 顶层只有 node_modules/out/package.json/src），而 `out/` 是进得去的，
+ * 所以打包前把配置暂存到 out/ 再打进去；运行时也从这里读，仍然受 asar 完整性校验保护。
+ */
+const PACKAGED_CONFIG_RELATIVE = "out/app.config.json";
+
+/** 把 resources/app.config.json 暂存到 out/app.config.json，供 electron-builder 打进 asar。 */
+function stagePackagedConfig() {
+  const source = path.join(PROJECT_ROOT, "resources", "app.config.json");
+  const target = path.join(PROJECT_ROOT, PACKAGED_CONFIG_RELATIVE);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+  console.log(`[dist] 已暂存运营配置 → ${PACKAGED_CONFIG_RELATIVE}（打包用，二进制与源文件一致）`);
+}
+
+/**
  * 读 app.asar 的文件表（asar 头部是 JSON 目录表：16 字节头 + 该 JSON）。
  * 用于打包后确认运营配置真的进了包——macOS 上曾出现配置没进 asar、客户端起不来的情况，
  * 这类问题必须在构建期就暴露，不能等到了客户机器上才发现。
@@ -138,19 +155,19 @@ function verifyPackagedConfig() {
     const resourcesRoot = path.dirname(asarPath);
     const label = path.relative(releaseDir, asarPath);
     const entries = asarEntries(asarPath);
-    const inAsar = asarHasPath(entries, "resources/app.config.json");
-    const inAppDir = fs.existsSync(path.join(resourcesRoot, "app", "resources", "app.config.json"));
+    const inAsar = asarHasPath(entries, PACKAGED_CONFIG_RELATIVE);
+    const inAppDir = fs.existsSync(path.join(resourcesRoot, "app", PACKAGED_CONFIG_RELATIVE));
     const topLevel = Object.keys(entries.files || {}).join(", ");
     if (inAsar) {
-      console.log(`[dist] 自检通过（asar 布局）：${label} 内含 resources/app.config.json`);
+      console.log(`[dist] 自检通过（asar 布局）：${label} 内含 ${PACKAGED_CONFIG_RELATIVE}`);
     } else if (inAppDir) {
-      console.warn(`[dist] 自检通过（app 目录布局）：${label} 的 asar 内没有配置，但同级 app/resources/ 下有；asar 顶层条目=${topLevel}`);
+      console.warn(`[dist] 自检通过（app 目录布局）：${label} 的 asar 内没有配置，但同级展开的 app 目录下有；asar 顶层条目=${topLevel}`);
     } else {
-      failures.push(`  ${label}：asar 内与同级 app 目录里都没有 resources/app.config.json；asar 顶层条目=${topLevel}`);
+      failures.push(`  ${label}：asar 内与同级 app 目录里都没有 ${PACKAGED_CONFIG_RELATIVE}；asar 顶层条目=${topLevel}`);
     }
   }
   if (failures.length) {
-    throw new Error(`打包产物缺少运营配置（客户端会停在"未配置管理后台地址"）：\n${failures.join("\n")}\n请检查 package.json 的 build.files 是否包含 resources/app.config.json。`);
+    throw new Error(`打包产物缺少运营配置（客户端会停在"未配置管理后台地址"）：\n${failures.join("\n")}\n请检查 package.json 的 build.files 是否包含 ${PACKAGED_CONFIG_RELATIVE}。`);
   }
 }
 
@@ -230,6 +247,7 @@ let exitCode = 1;
 backupSources();
 try {
   await compileBytecode();
+  stagePackagedConfig();
   exitCode = await runBuilder(target === "--win" ? "win" : "mac");
   if (exitCode === 0) {
     try {
