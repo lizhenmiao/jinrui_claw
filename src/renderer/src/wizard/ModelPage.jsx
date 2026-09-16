@@ -1,6 +1,5 @@
 /**
- * 向导模型页：对照 2.0 设计稿 —— 订阅模型（展示后台可用模型清单供选择）与
- * 手动配置（openAI/Anthropic 胶囊切换 + 三行表单）两种模式，底部"下一步"进 BOT 配置。
+ * 向导模型页：对照 2.0 设计稿 —— 订阅模型（展示后台可用模型清单供选择）与手动配置（openAI/Anthropic 胶囊切换 + 三行表单）两种模式，底部"下一步"进 BOT 配置。
  */
 import React, { useEffect, useRef, useState } from "react";
 import desktopApi from "../api.js";

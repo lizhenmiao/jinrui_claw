@@ -178,7 +178,8 @@ export function WechatPanel({ toast, plain }) {
 
 /**
  * QQ 双码面板：左侧官方创建入口码，右侧进面板自动装插件并生成绑定码（与微信面板一致，无需先点按钮）。
- * 扫码进度由主进程的绑定会话推进（过期自动换码），面板轮询展示（已绑定态从落盘配置推导，重启后仍在）。
+ * 扫码进度由主进程的绑定会话推进（过期自动换码），面板轮询展示；
+ * 已绑定态从落盘配置推导，重启后仍能显示。
  */
 export function QQPanel({ toast, plain }) {
   const [createSvg, setCreateSvg] = useState("");

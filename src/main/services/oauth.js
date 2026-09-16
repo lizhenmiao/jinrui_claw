@@ -1,5 +1,7 @@
 /**
- * OAuth / OIDC 服务：Authorization Code + PKCE（S256）。
+ * OAuth / OIDC 服务：Authorization Code + PKCE（S256）的公共客户端（public client）。
+ * 桌面端藏不住密钥，因此不使用 client_secret——凭据安全由 PKCE 的 code_verifier 提供：
+ * 授权码即使被截获，没有 verifier 也换不出令牌。
  * 登录在系统默认浏览器完成，回调落在本地临时监听器（oauth-listener.js）。
  * 会话令牌写入 U 盘数据目录并按敏感字段加密。
  */
@@ -140,8 +142,6 @@ function oauthSettings() {
     issuer: trimTrailingSlash(oauth.issuer || ""),
     authorizationOrigin: trimTrailingSlash(oauth.authorizationOrigin || oauth.issuer || ""),
     clientId: safeText(oauth.clientId),
-    clientSecret: safeText(oauth.clientSecret),
-    clientType: safeText(oauth.clientType, "confidential"),
     scopes: safeText(oauth.scopes),
   };
 }
@@ -195,7 +195,7 @@ function brandPage(title, message, ok) {
     ? '<svg width="40" height="40" viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="#20c878"/><path d="m15 27 7.5 7.5L38 20" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
     : '<svg width="40" height="40" viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="#ff4d4f"/><path d="M17 17l18 18M35 17 17 35" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>';
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} - ZgyClaw</title><style>
-*{margin:0;padding:0;box-sizing:border-box}
+* {margin:0;padding:0;box-sizing:border-box}
 body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f9f9f9;font-family:"PingFang SC","Microsoft YaHei",sans-serif;color:#1f1f1f}
 .card{width:400px;background:#fff;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,.08);padding:40px 36px 34px;text-align:center}
 .logo{font-size:26px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px}
@@ -239,7 +239,6 @@ async function handleCallback(params = {}) {
       code: params.code,
       redirect_uri: getAppConfig().oauth.redirectUri,
       code_verifier: item.verifier,
-      client_secret: settings.clientType === "confidential" ? settings.clientSecret : "",
     }),
   });
   if (!safeText(token.access_token)) throw new Error("OAuth 服务未返回 access_token");
@@ -318,7 +317,6 @@ async function refresh() {
           grant_type: "refresh_token",
           client_id: settings.clientId,
           refresh_token: session.refreshToken,
-          client_secret: settings.clientType === "confidential" ? settings.clientSecret : "",
         }),
       });
     } catch (error) {
@@ -370,7 +368,7 @@ async function accountRequest(kind) {
 }
 
 /** 套餐入口的 OpenAI 兼容模型列表：只返回该用户在套餐下真正可调用的模型，
- *  并在平台启用时额外包含虚拟模型 auto（由平台按对话自动挑选真实模型）。 */
+ * 并在平台启用时额外包含虚拟模型 auto（由平台按对话自动挑选真实模型）。 */
 async function planEntryModels(accessToken) {
   const settings = oauthSettings();
   const url = joinUrl(settings.issuer, "/api/token-plan/v1/models");

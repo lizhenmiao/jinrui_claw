@@ -2,13 +2,13 @@
  * 后台客户端：授权校验、模型配置同步、设备事件上报。
  * 设备身份 = U 盘指纹（usbId）+ 本机标识（machineId），后台地址与授权码来自应用配置。
  */
-const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { getPaths } = require("../paths");
 const { getAppConfig } = require("../app-config");
-const { getUsbId, getDriveInfo } = require("./fingerprint");
+const { getUsbId, getDriveInfo, getMachineId } = require("./fingerprint");
+const { boundLicenseKey } = require("./license");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
 const { readConfig, writeConfig } = require("./config-store");
 const timing = require("../../shared/timing.json");
@@ -32,20 +32,31 @@ function writeLog(message, details) {
   } catch { /* 日志失败不影响业务 */ }
 }
 
-/** 后台接入信息：应用配置 backend 段 + 产品版本。 */
+/**
+ * 后台接入信息。授权码只来自本盘绑定文件（--bind-usb --license 写入），一张盘一个授权码，所以同一个安装包能发给不同客户，包内不保留任何授权码。
+ * 后台地址与产品版本来自包内配置，地址不允许外部提供（能被改就等于架空授权）。
+ * 这里不声明 channel：下发版本与模型走哪条通道，由后台按授权记录上的 channel 决定。
+ */
 function readBackendSettings() {
   const backend = getAppConfig().backend || {};
   const product = getAppConfig().product || {};
-  const licenseKey = String(backend.licenseKey || "").trim();
-  const backendUrl = String(backend.url || "").trim().replace(/\/+$/, "");
   return {
-    enabled: Boolean(backendUrl && licenseKey),
-    licenseKey,
-    backendUrl,
-    channel: String(backend.channel || "stable").trim(),
+    licenseKey: boundLicenseKey(),
+    backendUrl: String(backend.url || "").trim().replace(/\/+$/, ""),
     clientVersion: String(product.version || "unknown").trim(),
-    reportOnly: backend.reportOnly !== false,
   };
+}
+
+/**
+ * 取后台接入信息，缺任何一项直接抛错：后台是必需依赖，配不全属于部署事故。
+ * override.licenseKey 供命令行"先把授权码拿去后台核对再绑定"使用（此时绑定文件还没写出来）。
+ */
+function requireBackendSettings(override = {}) {
+  const settings = readBackendSettings();
+  if (!settings.backendUrl) throw new Error("未配置管理后台地址（app.config.json 的 backend.url）。");
+  const licenseKey = String(override.licenseKey || settings.licenseKey).trim();
+  if (!licenseKey) throw new Error("本 U 盘未绑定授权码，请执行 zgyclaw.exe --bind-usb --license 你的授权码。");
+  return { ...settings, licenseKey };
 }
 
 function joinUrl(base, pathname) {
@@ -78,25 +89,11 @@ async function postJson(url, body, timeoutMs = DEFAULT_TIMEOUT_MS) {
   }
 }
 
-/** 本机标识：首次生成后持久化，跨次启动稳定。 */
-function getMachineId() {
-  const { stateDir } = getPaths();
-  const file = path.join(stateDir, "machine-id.txt");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    const existing = fs.readFileSync(file, "utf8").trim();
-    if (existing) return existing;
-  } catch { /* 首次生成 */ }
-  const seed = [os.hostname(), os.userInfo().username, os.platform(), os.arch(), crypto.randomUUID()].join("|");
-  const id = `MACHINE-${crypto.createHash("sha256").update(seed).digest("hex").slice(0, 24).toUpperCase()}`;
-  fs.writeFileSync(file, id + "\n", "utf8");
-  return id;
-}
-
-function clientContext() {
+/** 请求上下文：本机与 U 盘身份。override.licenseKey 供命令行"先核对再绑定"用。 */
+function clientContext(override = {}) {
   const settings = readBackendSettings();
   return {
-    licenseKey: settings.licenseKey,
+    licenseKey: String(override.licenseKey || settings.licenseKey).trim(),
     usbId: getUsbId(),
     machineId: getMachineId(),
     hostname: os.hostname(),
@@ -104,13 +101,13 @@ function clientContext() {
     arch: os.arch(),
     driveFs: String(getDriveInfo().fileSystem || ""),
     clientVersion: settings.clientVersion,
-    channel: settings.channel,
   };
 }
 
+/** 上报一条事件；后台不可用时只记日志（心跳与事件不许影响客户端功能）。 */
 async function reportEvent(event) {
   const settings = readBackendSettings();
-  if (!settings.enabled) return { ok: false, skipped: true };
+  if (!settings.backendUrl || !settings.licenseKey) return { ok: false, skipped: true };
   const ctx = clientContext();
   try {
     await postJson(joinUrl(settings.backendUrl, "/api/client/event"), {
@@ -129,13 +126,13 @@ async function reportEvent(event) {
   }
 }
 
-/** 后台授权校验：reportOnly 模式仅上报不拦截。 */
-async function checkBackendLicense() {  const settings = readBackendSettings();
-  if (!settings.enabled) {
-    writeLog("backend license check skipped", { reason: "backend.url 或 backend.licenseKey 未配置" });
-    return { ok: true, skipped: true, reportOnly: true };
-  }
-  const ctx = clientContext();
+/**
+ * 后台授权校验。返回 rejected=true 表示**后台明确拒绝**（授权无效/过期/U 盘不匹配等业务错误码），启动链据此拒绝启动；网络不通、超时、后台 5xx 属于"无法判定"，只记日志不拦截——否则后台一故障或客户在内网环境就会集体打不开，而本地 U 盘指纹授权此时仍在把关。
+ * override.licenseKey 用于命令行绑定前核对指定授权码（此时绑定文件还没写出来）。
+ */
+async function checkBackendLicense(override = {}) {
+  const settings = requireBackendSettings(override);
+  const ctx = clientContext(override);
   try {
     const data = await postJson(joinUrl(settings.backendUrl, "/api/client/license/check"), {
       licenseKey: ctx.licenseKey,
@@ -149,15 +146,17 @@ async function checkBackendLicense() {  const settings = readBackendSettings();
     });
     writeLog("backend license check success", { usbId: ctx.usbId });
     await reportEvent({ eventType: "license_check_success", level: "info", message: "Backend license check succeeded." });
-    return { ok: true, data, reportOnly: settings.reportOnly };
+    return { ok: true, data };
   } catch (error) {
+    // 业务拒绝由 postJson 带出后台的 code（如 USB_MISMATCH）；网络/服务器故障没有 code。
+    const rejected = Boolean(error.code);
     const result = {
       ok: false,
-      reportOnly: settings.reportOnly,
+      rejected,
       message: error.message,
-      code: error.code || "BACKEND_LICENSE_FAILED",
+      code: error.code || "BACKEND_UNREACHABLE",
     };
-    writeLog("backend license check failed", result);
+    writeLog(rejected ? "backend license rejected" : "backend license check unreachable", result);
     return result;
   }
 }
@@ -165,7 +164,7 @@ async function checkBackendLicense() {  const settings = readBackendSettings();
 /** 设备心跳：刷新后台"最近在线"，让运营侧能看到客户端当前是否在跑（失败静默，下个周期重试）。 */
 async function devicePing() {
   const settings = readBackendSettings();
-  if (!settings.enabled) return { ok: false, skipped: true };
+  if (!settings.backendUrl || !settings.licenseKey) return { ok: false, skipped: true };
   const ctx = clientContext();
   try {
     await postJson(joinUrl(settings.backendUrl, "/api/client/device/ping"), {
@@ -198,7 +197,10 @@ function normalizeProviders(remoteProviders) {
 /** 后台下发 provider 的标记：后台不再下发时据此回收，避免配置里留幽灵条目。 */
 const BACKEND_PROVIDER_SOURCE = "backend";
 
-/** 判断某个 provider 是否来自后台下发（早期写入的没有标记，用后台必带的 requiresClientKey 兜底识别）。 */
+/**
+ * 判断某个 provider 是否来自后台下发。后台下发的都会带 source 标记；
+ * 没有标记但带 requiresClientKey 的也算（该字段只有后台下发会写）。
+ */
 function isBackendProvider(provider) {
   return Boolean(provider && typeof provider === "object" && (provider.source === BACKEND_PROVIDER_SOURCE || provider.requiresClientKey === true));
 }
@@ -212,7 +214,7 @@ function mergeRemoteModels(remote) {
   config.models = config.models && typeof config.models === "object" ? config.models : {};
   config.models.providers = config.models.providers && typeof config.models.providers === "object" ? config.models.providers : {};
 
-  // 回收：曾经由后台写入、这次不再下发的 provider（含运营在后台关掉的）。
+  // 回收后台来源但这次没下发到的 provider（含运营在后台关掉的）：只动带后台标记的，客户自己填的 provider 不碰。
   const removed = [];
   for (const [id, provider] of Object.entries(config.models.providers)) {
     if (providerIds.includes(id) || !isBackendProvider(provider)) continue;
@@ -261,20 +263,15 @@ function mergeRemoteModels(remote) {
   };
 }
 
-/** 拉取后台模型配置并合并到本地；后台未配置时静默跳过。 */
-async function syncBackendModels(reason) {
-  const settings = readBackendSettings();
-  if (!settings.enabled) {
-    writeLog("backend model sync skipped", { reason: "backend 未配置" });
-    return { ok: true, skipped: true };
-  }
+/** 拉取后台模型配置并合并到本地。 */
+async function syncBackendModels() {
+  const settings = requireBackendSettings();
   const ctx = clientContext();
   try {
     const data = await postJson(joinUrl(settings.backendUrl, "/api/client/models/config"), {
       licenseKey: ctx.licenseKey,
       usbId: ctx.usbId,
       clientVersion: ctx.clientVersion,
-      channel: ctx.channel,
     });
     const merged = mergeRemoteModels(data || {});
     writeLog("backend model sync success", merged);
@@ -290,6 +287,8 @@ async function syncBackendModels(reason) {
 module.exports = {
   checkBackendLicense,
   devicePing,
+  readBackendSettings,
   reportEvent,
+  requireBackendSettings,
   syncBackendModels,
 };

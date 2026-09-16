@@ -1,7 +1,7 @@
 /**
- * 向导 BOT 页：对照 2.0 设计稿（Desktop-12）—— 通道面板工作区（ChannelWorkbench）+ 底部"暂不接入，跳过"。
+ * 向导 BOT 页：通道面板工作区（ChannelWorkbench）+ 底部"暂不接入，跳过"链接。
  * 进入页面即预生成微信登录二维码（未绑定过时），并轮询各通道连接状态：
- * 只要有一个平台接入成功，底部"下一步"就会亮起，不必非要点"跳过"。
+ * 只要有一个平台接入成功，左下角小箭头亮起、右下角出现"下一页"，不必非要点"跳过"。
  */
 import React, { useEffect, useRef } from "react";
 import desktopApi from "../api.js";

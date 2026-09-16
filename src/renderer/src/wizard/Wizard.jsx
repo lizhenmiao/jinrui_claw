@@ -46,7 +46,7 @@ function Step({ label, icon, state }) {
   );
 }
 
-/** 底部导航：左下圆形返回/前进 + 居中步骤条。 */
+/** 底部导航：左下圆形返回/前进 + 居中步骤条 + BOT 页右下角的醒目"下一页"。 */
 function WizardFooter({ page, step, onBack, onForward, forwardEnabled }) {
   if (!step) return null;
   return (
@@ -80,6 +80,16 @@ function WizardFooter({ page, step, onBack, onForward, forwardEnabled }) {
           />
         ))}
       </div>
+      {/* BOT 页通道多、左下角的小箭头不够显眼：接好一个工具后右下角出现实心"下一页"；一个都没接时不出现。 */}
+      {page === "bot" && forwardEnabled && (
+        <button
+          type="button"
+          className="absolute bottom-[16px] right-[36px] h-[40px] rounded-full bg-ink px-[30px] text-[15px] font-medium text-white transition hover:opacity-90"
+          onClick={onForward}
+        >
+          下一页
+        </button>
+      )}
     </div>
   );
 }
@@ -109,7 +119,7 @@ export default function Wizard({ onConfigured }) {
 
   const saveAndStart = useCallback(async () => {
     try {
-      // BOT 页里扫码/保存的配置由主进程随时落盘，保存前重新读最新值再改，避免把进向导时的旧快照写回去。
+      // BOT 页里扫码/保存的配置由主进程随时落盘，保存前重新读最新值再改，避免把进向导时那份旧快照写回去、清掉刚写入的通道凭据。
       const { config: latest } = await desktopApi.config.load();
       const cfg = JSON.parse(JSON.stringify(latest || {}));
       cfg.gateway = { mode: "local", port: 18789, bind: "loopback", ...(cfg.gateway || {}), auth: { mode: "token", ...(cfg.gateway?.auth || {}) } };

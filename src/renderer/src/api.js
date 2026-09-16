@@ -87,7 +87,6 @@ export const desktopApi = {
     wechat: {
       login: (options) => getBridge().channels.wechat.login(options),
       prewarm: () => getBridge().channels.wechat.prewarm(),
-      warmup: () => getBridge().channels.wechat.warmup(),
       status: () => getBridge().channels.wechat.status(),
     },
     qq: {

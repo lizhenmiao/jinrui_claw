@@ -1,6 +1,5 @@
 /**
- * OAuth 本地回调监听器：仅在登录流程期间监听 127.0.0.1 的回调端口，
- * 收到授权回调后转交 oauth 服务并自动关闭监听。
+ * OAuth 本地回调监听器：仅在登录流程期间监听 127.0.0.1 的回调端口，收到授权回调后转交 oauth 服务并自动关闭监听。
  * 平时不存在任何对外监听；端口冲突时给出明确错误。
  */
 const http = require("http");
@@ -11,13 +10,19 @@ const oauth = require("./oauth");
 
 let server = null;
 
+/**
+ * 本地回调端口取自 oauth.redirectUri 的端口——它必须和授权平台登记的回调白名单一致，所以只认这一个来源，不再单设一个端口配置项（两处配置会各自跑偏）。
+ * 地址缺失或不合法时直接报错：静默退回某个默认端口只会让登录卡在收不到回调上。
+ */
 function callbackPort() {
   const redirectUri = String(getAppConfig().oauth.redirectUri || "");
+  let parsed;
   try {
-    return Number(new URL(redirectUri).port) || (redirectUri.startsWith("https") ? 443 : 80);
+    parsed = new URL(redirectUri);
   } catch {
-    return 18790;
+    throw new Error("OAuth 回调地址无效（app.config.json 的 oauth.redirectUri），无法接收登录回调。");
   }
+  return Number(parsed.port) || (parsed.protocol === "https:" ? 443 : 80);
 }
 
 /** 页面模板：统一走 oauth 的品牌化卡片（登录回调场景默认失败样式）。 */

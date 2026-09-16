@@ -1,6 +1,5 @@
 /**
- * 整包更新：检查后台新版本 → 下载并校验 SHA-256 → 生成替换脚本 →
- * 退出客户端后由脚本完成新旧可执行文件交换并重新拉起。
+ * 整包更新：检查后台新版本 → 下载并校验 SHA-256 → 生成替换脚本 →退出客户端后由脚本完成新旧可执行文件交换并重新拉起。
  */
 const fs = require("fs");
 const path = require("path");
@@ -11,15 +10,7 @@ const { getPaths } = require("../paths");
 const { getAppConfig } = require("../app-config");
 const { getUsbId } = require("./fingerprint");
 const timing = require("../../shared/timing.json");
-const { reportEvent } = require("./backend-client");
-
-function backendUrl() {
-  return String(getAppConfig().backend?.url || "").replace(/\/+$/, "");
-}
-
-function licenseKey() {
-  return String(getAppConfig().backend?.licenseKey || "");
-}
+const { requireBackendSettings, reportEvent } = require("./backend-client");
 
 function currentVersion() {
   return String(getAppConfig().product?.version || "0.0.0");
@@ -50,23 +41,23 @@ async function postJson(url, body, timeoutMs = timing.update.requestTimeoutMs) {
   }
 }
 
-/** 向后台查询是否有新版本。 */
+/**
+ * 向后台查询是否有新版本。
+ * 不带 channel：版本按哪条通道发由后台按授权记录上的 channel 决定，客户端声明反而会盖掉它。
+ */
 async function checkUpdate() {
-  const base = backendUrl();
-  if (!base) throw new Error("未配置后台地址（app.config.json backend.url）");
-  if (!licenseKey()) throw new Error("未配置授权码（app.config.json backend.licenseKey）");
-  await postJson(joinUrl(base, "/api/client/license/check"), {
-    licenseKey: licenseKey(),
+  const settings = requireBackendSettings();
+  await postJson(joinUrl(settings.backendUrl, "/api/client/license/check"), {
+    licenseKey: settings.licenseKey,
     usbId: getUsbId(),
     clientVersion: currentVersion(),
   });
-  const response = await postJson(joinUrl(base, "/api/client/update/check"), {
-    licenseKey: licenseKey(),
+  const response = await postJson(joinUrl(settings.backendUrl, "/api/client/update/check"), {
+    licenseKey: settings.licenseKey,
     usbId: getUsbId(),
     platform: process.platform === "darwin" ? "macos" : "windows",
     arch: process.arch,
     currentVersion: currentVersion(),
-    channel: String(getAppConfig().backend?.channel || "stable"),
   });
   return { ok: true, request: { currentVersion: currentVersion() }, result: response.data || response };
 }

@@ -1,6 +1,5 @@
 /**
- * openclaw 配置存取：openclaw.json 的读取、深合并写入、敏感字段加密、
- * 出厂模板、agent 凭证同步与插件加载路径治理。
+ * openclaw 配置存取：openclaw.json 的读取、深合并写入、敏感字段加密、出厂模板、agent 凭证同步与插件加载路径治理。
  * 全部写入使用原子写，数据目录固定在 U 盘 data/。
  */
 const fs = require("fs");
@@ -12,8 +11,7 @@ const { appendLogLine } = require("./logs");
 
 /**
  * 出厂模板：重置与首次读取时使用，网关 token 每次生成随机值。
- * 不带任何 provider 与默认模型：模型由订阅同步、后台下发或向导里手填三者之一写入，
- * 模板里预置一个会出现"后台已停用但客户端仍显示"的幽灵模型。
+ * 不带任何 provider 与默认模型：模型由订阅同步、后台下发或向导里手填三者之一写入，模板里预置一个会出现"后台已停用但客户端仍显示"的幽灵模型。
  */
 function buildFactoryConfig() {
   return {
@@ -62,16 +60,14 @@ function readConfig() {
 }
 
 /**
- * 向导配置是否已保存过：以 U 盘上的向导完成标记为准（出厂重置会删除），
- * 不依赖本机 localStorage，也不以出厂模板自带的 provider 误判。
+ * 向导配置是否已保存过：以 U 盘上的向导完成标记为准（出厂重置会删除），不依赖本机 localStorage，也不以出厂模板自带的 provider 误判。
  */
 function isConfigured() {
   return fileExists(path.join(getPaths().dataDir, "wizard-completed.flag"));
 }
 
 /**
- * 写入配置。默认与现有配置深合并（UI 只发送当前选中的 provider，其余保留），
- * replace 为 true 时整体替换（出厂重置使用，防止旧密钥残留）。
+ * 写入配置。默认与现有配置深合并（UI 只发送当前选中的 provider，其余保留），replace 为 true 时整体替换（出厂重置使用，防止旧密钥残留）。
  */
 /** 调用点（文件:行），用于排查"这次配置是谁改的"。 */
 function callerSite() {
@@ -200,8 +196,7 @@ function normalizePortableFields(config) {
 
 /**
  * 给模型展示名加品牌前缀（`中广云 · DeepSeek V4 Flash`）。
- * 网关聊天界面的模型列表只显示 `models[].name`，只有重名时才补 provider id，
- * 所以品牌前缀是让人一眼看出模型属于哪个提供商的唯一手段；已带同前缀的不重复加。
+ * 网关聊天界面的模型列表只显示 `models[].name`，只有重名时才补 provider id，所以品牌前缀是让人一眼看出模型属于哪个提供商的唯一手段；已带同前缀的不重复加。
  * 纯展示字段，不影响实际调用（调用走 `providerId/modelId`）。
  */
 function brandModelNames(models, brand) {
@@ -241,8 +236,7 @@ function writeSubscriptionProvider(synced) {
 }
 
 /**
- * 插件加载路径治理：只保留当前会话真实存在的目录
- * （应用资源内插件目录 + U 盘数据目录里的 QQ 插件工程），其余清掉。
+ * 插件加载路径治理：只保留当前会话真实存在的目录（应用资源内插件目录 + U 盘数据目录里的 QQ 插件工程），其余清掉。
  */
 function reconcilePluginLoadPaths(config) {
   const { pluginsDir, npmProjectsDir, modulesCacheDir } = getPaths();
@@ -275,8 +269,7 @@ function ensurePluginLoadPath(config, pluginPath) {
 }
 
 /**
- * 把 provider 的 API Key 同步到 agent 凭证目录，
- * 让网关和 agent 直接使用同一份凭证，并清除粘滞的失败状态。
+ * 把 provider 的 API Key 同步到 agent 凭证目录，让网关和 agent 直接使用同一份凭证，并清除粘滞的失败状态。
  */
 function syncAgentAuthProfilesFromConfig(config) {
   const { stateDir } = getPaths();
@@ -325,12 +318,16 @@ function syncAgentAuthProfilesFromConfig(config) {
   }
 }
 
-/** 删除单个路径；Windows 下被进程占用的句柄释放有延迟，失败时稍等重试。
- *  返回是否删除成功（目标本就不存在也算成功）。 */
+/**
+ * 删除单个路径；Windows 下被进程占用的句柄释放有延迟，失败时稍等重试。
+ * 必须用异步的 fs.promises.rm：同步递归删除一棵几千文件的树会堵住主进程事件循环，
+ * 窗口不重绘、IPC 不返回，用户看到的就是"点了恢复出厂直接卡死"。
+ * 返回是否删除成功（目标本就不存在也算成功）。
+ */
 async function removePathWithRetry(target, attempts = 6, waitMs = 300) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      fs.rmSync(target, { recursive: true, force: true });
+      await fs.promises.rm(target, { recursive: true, force: true });
       return true;
     } catch {
       if (attempt >= attempts - 1) return false;
@@ -340,12 +337,12 @@ async function removePathWithRetry(target, attempts = 6, waitMs = 300) {
 }
 
 /** 出厂重置：清空用户痕迹（保留通道依赖的包缓存目录），写入干净模板。
- *  有数据因占用删不掉时如实报错给界面，不静默留残数据（半清状态会让界面显示错的绑定态）。 */
+ * 有数据因占用删不掉时如实报错给界面，不静默留残数据（半清状态会让界面显示错的绑定态）。 */
 async function resetAll() {
   const { dataDir, logsDir, configPath } = getPaths();
   const keepItems = new Set(["openclaw.json", "secret.key", "extensions", "npm", "plugin-skills", "license.json"]);
   const failed = [];
-  for (const item of fs.readdirSync(dataDir)) {
+  for (const item of await fs.promises.readdir(dataDir)) {
     if (keepItems.has(item)) continue;
     if (!(await removePathWithRetry(path.join(dataDir, item)))) failed.push(item);
   }

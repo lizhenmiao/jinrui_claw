@@ -33,5 +33,6 @@ npm-debug.log*
 # 原型参考素材（本地比对用，不入库）
 .design-refs/
 
-# 本地联调覆盖（不随包分发，交付仍用 resources/app.config.json）
+# 真实运营配置（线上后台地址、OAuth 公共客户端 ID 等）：不入库
+# 开发默认值见入库的 resources/app.config.example.json；CI 打包时从仓库 Secrets 注入
 app.config.json

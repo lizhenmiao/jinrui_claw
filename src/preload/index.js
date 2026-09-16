@@ -1,7 +1,6 @@
 /**
  * 预加载脚本：通过 contextBridge 向渲染进程暴露类型化 API。
- * 命名空间 channel.app / channel.config / ... 按业务域分组，
- * 渲染进程不接触任何 Node/Electron 原生能力。
+ * 命名空间 channel.app / channel.config / ... 按业务域分组，渲染进程不接触任何 Node/Electron 原生能力。
  */
 const { contextBridge, ipcRenderer } = require("electron");
 
@@ -85,7 +84,6 @@ const bridge = {
     wechat: {
       login: (options) => ipcRenderer.invoke("channel:wechat:login", options),
       prewarm: invoke("channel:wechat:prewarm"),
-      warmup: invoke("channel:wechat:warmup"),
       status: invoke("channel:wechat:status"),
     },
     qq: {

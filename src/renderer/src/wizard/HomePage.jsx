@@ -1,6 +1,5 @@
 /**
- * 向导首页：对照 2.0 设计稿 1:1 还原 —— 居中品牌区、龙虾吉祥物横幅（Coding Plan 徽章）、
- * 三张能力卡片、黑色"快速配置"主按钮与服务规则勾选。
+ * 向导首页：对照 2.0 设计稿 1:1 还原 —— 居中品牌区、龙虾吉祥物横幅（Coding Plan 徽章）、三张能力卡片、黑色"快速配置"主按钮与服务规则勾选。
  */
 import React, { useState } from "react";
 import { useToast } from "../components/ui.jsx";

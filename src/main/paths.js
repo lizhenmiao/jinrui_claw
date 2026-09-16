@@ -4,6 +4,7 @@
  * openclaw 模块缓存解压到本机磁盘，U 盘只保留一份压缩包。
  */
 const os = require("os");
+const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { app } = require("electron");
@@ -27,6 +28,21 @@ function resolveLocalCacheRoot() {
   return path.join(app.getPath("userData"), "cache");
 }
 
+/**
+ * 模块缓存键：按模块压缩包自身（大小 + 修改时间）算，不按 exe 所在路径算。
+ * 这样同一台机器上换盘符、换 USB 口、改程序文件夹名都命中同一份缓存，不会把几十秒的解压重做一遍；
+ * 换了新的模块包（重新打包过）则大小/时间必然变化，自动用新缓存，不会串用旧树。
+ * 压缩包不在时退化成一个固定键：反正这时也解不出东西，解压会明确报错。
+ */
+function modulesCacheKey(archivePath) {
+  let identity = "payload-missing";
+  try {
+    const stat = fs.statSync(archivePath);
+    identity = `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+  } catch { /* 压缩包缺失：用固定键占位，解压时会给明确错误 */ }
+  return crypto.createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+
 function build() {
   const productRoot = resolveProductRoot();
   const dataDir = path.join(productRoot, "data");
@@ -37,7 +53,9 @@ function build() {
   const resourcesDir = app.isPackaged
     ? path.resolve(path.dirname(app.getPath("exe")), "resources")
     : path.join(productRoot, "resources");
-  const cacheKey = crypto.createHash("sha256").update(productRoot.toLowerCase()).digest("hex").slice(0, 16);
+  const payloadDir = path.join(resourcesDir, "payload");
+  const payloadArchive = path.join(payloadDir, "openclaw-modules.tar.gz");
+  const cacheKey = modulesCacheKey(payloadArchive);
   return {
     productRoot,
     dataDir,
@@ -49,8 +67,8 @@ function build() {
     dingtalkChannelConfigPath: path.join(dataDir, "dingtalk-channel.json"),
     modulesCacheDir: path.join(resolveLocalCacheRoot(), cacheKey, "node_modules"),
     // 按需安装的 payload 包目录（登记表见 services/modules.js 的 PAYLOADS）。
-    payloadDir: path.join(resourcesDir, "payload"),
-    payloadArchive: path.join(resourcesDir, "payload", "openclaw-modules.tar.gz"),
+    payloadDir,
+    payloadArchive,
     pluginsDir: path.join(resourcesDir, "plugins"),
     bridgeDir: path.join(resourcesDir, "bridge"),
     updateDir: path.join(dataDir, "update"),

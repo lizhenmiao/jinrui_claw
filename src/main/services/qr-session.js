@@ -1,7 +1,6 @@
 /**
  * 扫码绑定通用会话：状态、二维码缓存、过期自动重建策略、等待与变更通知。
- * 各通道只提供"怎么发起一次尝试"（微信拉子进程、QQ 调官方连接器）与"怎么结束当前尝试"，
- * 结果通过 reportQr / reportStatus / attemptEnded 报进来；
+ * 各通道只提供"怎么发起一次尝试"（微信拉子进程、QQ 调官方连接器）与"怎么结束当前尝试"，结果通过 reportQr / reportStatus / attemptEnded 报进来；
  * 冷却时间与连续重建上限统一取 timing.qrSession，保证各通道行为一致。
  */
 const timing = require("../../shared/timing.json");

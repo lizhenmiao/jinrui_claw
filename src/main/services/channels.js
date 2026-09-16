@@ -1,6 +1,5 @@
 /**
- * 聊天通道配置服务：企业微信、飞书、钉钉对话、微信、QQ 通道的
- * 凭证读写、插件路径登记、通道激活与飞书配对审批。
+ * 聊天通道配置服务：企业微信、飞书、钉钉对话、微信、QQ 通道的凭证读写、插件路径登记、通道激活与飞书配对审批。
  * 凭证字段落盘前统一加密。
  */
 const fs = require("fs");
@@ -43,9 +42,7 @@ function readWecomConfig() {
 }
 
 /**
- * 安装企业微信官方插件（openclaw 官方安装布局）：payload 解压到 state 的 extensions 目录，
- * openclaw 依赖按本机模块缓存重建链接——官方安装器就是这么做链接的，但链接目标含
- * 机器相关的缓存哈希，不随包分发，换机器激活时重建。
+ * 安装企业微信官方插件（openclaw 官方安装布局）：payload 解压到 state 的 extensions 目录，openclaw 依赖按本机模块缓存重建链接——官方安装器就是这么做链接的，但链接目标含机器相关的缓存哈希，不随包分发，换机器激活时重建。
  */
 function installWecomPlugin() {
   const target = ensurePayload("wecom");
@@ -144,8 +141,7 @@ function writeFeishuConfig(input) {
   return readFeishuConfig();
 }
 
-// openclaw 的 pairing-store 把配对与 allowFrom 都放在 state 目录的 credentials 下
-// （data/.openclaw/credentials，带账号键），读写必须跟插件同目录。
+// openclaw 的 pairing-store 把配对与 allowFrom 都放在 state 目录的 credentials 下（data/.openclaw/credentials，带账号键），读写必须跟插件同目录。
 function feishuPairingPath() {
   return path.join(getPaths().stateDir, "credentials", "feishu-pairing.json");
 }
@@ -256,7 +252,7 @@ function setFeishuDmPolicy(policyRaw) {
   const kept = policy === "open"
     ? (allowFrom.includes("*") ? allowFrom : [...allowFrom, "*"])
     : allowFrom.filter((entry) => entry !== "*");
-  // allowFrom 必须显式写回目标列表（可为空表）：writeConfig 是合并语义，输入里缺省的键删不掉磁盘旧值。
+  // allowFrom 必须显式写回目标列表（可以是空表）：writeConfig 是合并语义，输入里缺省的键删不掉磁盘旧值，只 delete 会留下坏组合。
   const next = { ...stripChannelKeys(previous), dmPolicy: policy, allowFrom: kept };
   config.channels.feishu = next;
   writeConfig(config);
@@ -322,8 +318,7 @@ function writeDingTalkChannelConfig(input) {
 // ---- 微信通道激活与整体通道预载 ----
 
 /**
- * 通道插件目录：优先随包分发的 resources/plugins/<name>（自包含），
- * 没有再用模块包解压出来的同名副本（如飞书：只随模块包分发）。
+ * 通道插件目录：优先随包分发的 resources/plugins/<name>（自包含），没有再用模块包解压出来的同名副本（如飞书：只随模块包分发）。
  * 只登记一条，避免同一插件被两个路径重复加载。
  */
 function channelPluginPath(bundledName, cacheSegments) {
@@ -484,8 +479,7 @@ function applyQQBotCredentials(accounts) {
 /** 通道运行时残留进程清理由 process-manager 的看护进程承担。 */
 
 /**
- * 删除不再使用的微信账号数据：索引去掉该账号，并清掉它的凭据、同步缓存、
- * 上下文令牌与授权名单（布局见 openclaw-weixin/src/auth/accounts.ts 的 clearWeixinAccount）。
+ * 清理被替换掉的微信账号数据：索引去掉该账号，并清掉它的凭据、同步缓存、上下文令牌与授权名单（布局见 openclaw-weixin/src/auth/accounts.ts 的 clearWeixinAccount）。
  * 重新绑定到另一个微信号后调用，避免新旧两个号同时在线收消息。
  */
 function dropWeixinAccounts(accountIds) {
@@ -521,9 +515,7 @@ function listWeixinAccounts() {
 }
 
 /**
- * 各通道连接状态摘要：向导据此判断"已经接入了一个平台"，确认页/运行页的"聊天工具"清单也按它列
- * （以已配置为准——扫码绑上或凭据填全，向导里仅选中未配置的不算）。微信看插件落盘的账号文件
- * （内存态重启即丢），其余通道看本地配置是否填全。
+ * 各通道连接状态摘要：向导据此判断"已经接入了一个平台"，确认页/运行页的"聊天工具"清单也按它列（以已配置为准——扫码绑上或凭据填全，向导里仅选中未配置的不算）。微信看插件落盘的账号文件（内存态重启即丢），其余通道看本地配置是否填全。
  * 键名与渲染层通道目录的工具 id 一致（如 dingtalk-channel），否则"聊天工具"清单会漏通道。
  */
 function channelSummary() {

@@ -1,11 +1,15 @@
 /**
- * 运行时模块引导：把 openclaw 模块压缩包解压到本机缓存（仅首次），
- * 后续启动直接命中缓存，U 盘只保留压缩包。
+ * 运行时模块引导：把 openclaw 模块压缩包解压到本机缓存（仅首次），后续启动直接命中缓存，U 盘只保留压缩包。
  */
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { getPaths } = require("../paths");
+
+/** 解压临时目录名前缀（后缀是进程号+时间戳），残留清理按它识别。 */
+const STAGING_PREFIX = "_extracting-";
+/** 正在进行的模块解压，用于并发单飞。 */
+let extracting = null;
 
 function log(message) {
   try {
@@ -26,8 +30,7 @@ function isReady() {
 
 /**
  * 本机是否已经把 openclaw 组件跑起来过一次。
- * 刚解压出来的模块树第一次执行要付冷启动代价（实测约 1 分钟：Windows 首次读取扫描 + 冷文件缓存），
- * 标记与模块缓存同目录，模块重新解压时随 node_modules 一起消失，冷启动代价随之重来。
+ * 刚解压出来的模块树第一次执行要付冷启动代价（实测约 1 分钟：Windows 首次读取扫描 + 冷文件缓存），标记与模块缓存同目录，模块重新解压时随 node_modules 一起消失，冷启动代价随之重来。
  */
 function isRuntimeWarm() {
   return fs.existsSync(path.join(getPaths().modulesCacheDir, ".zgy-warm"));
@@ -40,44 +43,101 @@ function markRuntimeWarm() {
   } catch { /* 标记写不进去只影响提示文案，不影响功能 */ }
 }
 
-/** 解压到临时目录再原子改名，避免中途失败留下半个缓存。 */
-function extractArchive(archive, cacheParent) {
-  fs.mkdirSync(cacheParent, { recursive: true });
-  const staging = path.join(cacheParent, "_extracting");
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.mkdirSync(staging, { recursive: true });
-
-  log(`extracting modules to ${cacheParent}`);
-  const tarExecutable = process.platform === "win32"
-    ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
-    : "tar";
-  const result = spawnSync(tarExecutable, ["-xzf", archive, "-C", staging], { windowsHide: true, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error("模块解压失败: " + (result.stderr || result.stdout || result.status));
-  }
-
-  const extracted = path.join(staging, "node_modules");
-  if (!fs.existsSync(extracted)) throw new Error("压缩包缺少 node_modules");
-
-  const finalDir = path.join(cacheParent, "node_modules");
-  fs.rmSync(finalDir, { recursive: true, force: true });
-  fs.renameSync(extracted, finalDir);
-  try { fs.rmSync(staging, { recursive: true, force: true }); } catch { /* 临时目录清理失败无害 */ }
-
-  fs.writeFileSync(path.join(finalDir, ".zgy-extract-ready"), `extractedAt=${new Date().toISOString()}\narchive=${archive}\n`, "utf8");
-  log("extract complete");
+/**
+ * 删目录：Windows 上句柄释放有延迟，带重试再判失败。
+ * 用异步删除，别用 rmSync——这里删的可能是几万文件的模块树（换模块包时要先清旧树），
+ * 同步删会把主进程事件循环堵住，加载页也跟着不重绘。
+ */
+async function removeDir(target) {
+  await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
-/** 确保模块缓存就绪并返回模块根目录；压缩包缺失时抛错。 */
-function ensureModules() {
+/** 清掉历史解压残留（上次崩溃或另一个实例留下的）；删不掉说明还有人在写，跳过即可。 */
+async function sweepStaleStaging(cacheParent) {
+  let entries = [];
+  try { entries = await fs.promises.readdir(cacheParent, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(STAGING_PREFIX)) continue;
+    try { await removeDir(path.join(cacheParent, entry.name)); } catch { /* 正被别人写，留给它自己清 */ }
+  }
+}
+
+/**
+ * 用系统 tar 解压模块包到缓存目录：先解到独立临时目录、再原子改名，中途失败不留半个缓存。
+ * 就绪标记写在**暂存目录里**、跟着树一起改名落地：树和标记是同一个原子单位，
+ * 因此不存在"树已经改名到位、标记却没写成"的中间态，也就不会下次把一棵完整的树白解压一遍。
+ * 必须异步：首次解压耗时约 1 分钟，同步会卡死主进程事件循环——窗口的 ready-to-show 事件处理不了，表现为双击后迟迟不弹窗口。
+ */
+function extractArchive(archive, cacheParent) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(cacheParent, { recursive: true });
+    // 残留暂存目录可能很大（上次解压到一半），删它同样不能让主进程卡住。
+    sweepStaleStaging(cacheParent).catch(() => { /* 清理失败不阻塞本次解压 */ });
+    // 临时目录带进程号与时间戳：既不撞残留目录，也不撞另一个实例正在写的目录。
+    const staging = path.join(cacheParent, `${STAGING_PREFIX}${process.pid}-${Date.now().toString(36)}`);
+    fs.mkdirSync(staging, { recursive: true });
+
+    log(`extracting modules to ${cacheParent}`);
+    const tarExecutable = process.platform === "win32"
+      ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
+      : "tar";
+    const child = spawn(tarExecutable, ["-xzf", archive, "-C", staging], { windowsHide: true });
+    let stderrText = "";
+    child.stderr.on("data", (chunk) => { stderrText += String(chunk); });
+    child.on("error", reject);
+    child.on("close", async (code) => {
+      if (code !== 0) {
+        reject(new Error("模块解压失败: " + (stderrText || code)));
+        return;
+      }
+      try {
+        const extracted = path.join(staging, "node_modules");
+        if (!fs.existsSync(extracted)) throw new Error("压缩包缺少 node_modules");
+        fs.writeFileSync(path.join(extracted, ".zgy-extract-ready"), `extractedAt=${new Date().toISOString()}\narchive=${archive}\n`, "utf8");
+        const finalDir = path.join(cacheParent, "node_modules");
+        await removeDir(finalDir);
+        try {
+          fs.renameSync(extracted, finalDir);
+        } catch (error) {
+          // 改名失败时缓存目录里可能留着删了一半的旧树：尽力清掉，别让残缺的树被当成"就绪"用起来。
+          try { await removeDir(finalDir); } catch { /* 清不掉就给下次启动重解压 */ }
+          throw error;
+        }
+        try { await removeDir(staging); } catch { /* 临时目录清理失败无害 */ }
+        log("extract complete");
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+/**
+ * 确保模块缓存就绪并返回模块根目录；压缩包缺失时抛错。
+ * 解压单飞：启动链与子进程启动可能同时要求就绪，两次 tar 解到同一个缓存目录会互删中间产物（实测报 ENOTEMPTY），并发调用一律等同一次解压。
+ */
+async function ensureModules() {
   const { payloadArchive, modulesCacheDir } = getPaths();
   if (isReady()) return modulesCacheDir;
   if (!fs.existsSync(payloadArchive)) {
     throw new Error(`缺少模块压缩包: ${payloadArchive}`);
   }
-  extractArchive(payloadArchive, path.dirname(modulesCacheDir));
+  if (!extracting) {
+    extracting = extractArchive(payloadArchive, path.dirname(modulesCacheDir))
+      .finally(() => { extracting = null; });
+  }
+  await extracting;
   if (!fs.existsSync(moduleEntryPath())) throw new Error("解压后未找到 openclaw.mjs");
   return modulesCacheDir;
+}
+
+/**
+ * 子进程启动用的模块根目录（同步）。解压由启动链在加载页阶段完成并等待，到这里必然已就绪；未就绪时抛错而不是返回路径，避免把待解压的目录塞进子进程环境变量。
+ */
+function requireModulesDir() {
+  if (!isReady()) throw new Error("运行时组件尚未准备好，请稍候重试");
+  return getPaths().modulesCacheDir;
 }
 
 
@@ -181,8 +241,10 @@ module.exports = {
   ensurePayload,
   findQQBotConnectorEntry,
   findQQBotPluginPaths,
+  isModulesReady: isReady,
   isPayloadReady,
   isRuntimeWarm,
   markRuntimeWarm,
   moduleEntryPath,
+  requireModulesDir,
 };

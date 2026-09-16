@@ -18,7 +18,6 @@ const qqLogin = require("./services/qq-login");
 const updater = require("./services/updater");
 const fs = require("fs");
 const path = require("path");
-const { pathToFileURL } = require("url");
 const { getPaths } = require("./paths");
 const timing = require("../shared/timing.json");
 
@@ -26,11 +25,14 @@ function escapeHtml(value) {
   return String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-/** 本地二维码 SVG 生成（复用 openclaw 模块内 qrcode 包）。 */
+/**
+ * 本地二维码 SVG 生成（复用 openclaw 模块内的 qrcode 包）。
+ * 必须用 require：qrcode 本身是 CommonJS，而安装包内的主进程是 V8 字节码，字节码里 import() 没有 host 回调（报 "A dynamic import callback was not specified."），表现就是扫码面板一直停在"生成中..."。
+ */
 async function renderQrSvg(data) {
   if (!data || data.length > 8192) throw new Error("二维码内容无效或过长");
-  const qrcodeModule = path.join(getPaths().modulesCacheDir, "openclaw", "node_modules", "qrcode");
-  const qrcode = await import(pathToFileURL(path.join(qrcodeModule, "lib", "index.js")).href);
+  const qrcodeEntry = path.join(getPaths().modulesCacheDir, "openclaw", "node_modules", "qrcode", "lib", "index.js");
+  const qrcode = require(qrcodeEntry);
   return qrcode.toString(data, { type: "svg", margin: 1, errorCorrectionLevel: "M", width: 138 });
 }
 
@@ -63,8 +65,7 @@ async function renderQrSvg(data) {
   });
   ipcMain.handle("config:isConfigured", () => isConfigured());
   ipcMain.handle("config:reset", async () => {
-    // 出厂重置：先停 QQ 扫码会话、网关/微信登录子进程等所有子进程并清微信内存态，
-    // 再清 data（Windows 下句柄释放有延迟，resetAll 内部带重试，删不掉会如实报错）。
+    // 出厂重置：先停 QQ 扫码会话、网关/微信登录子进程等所有子进程并清微信内存态，再清 data（Windows 下句柄释放有延迟，resetAll 内部带重试，删不掉会如实报错）。
     qqLogin.stop();
     await gateway.shutdownAll();
     gateway.resetWechatLoginState();
@@ -201,8 +202,7 @@ async function renderQrSvg(data) {
     return { ok: true, config };
   });
 
-  // ---- 通道：微信 ----
-  // 登录进程的启动、输出解析与状态推进都在 process-manager 内完成，这里只做接口映射。
+  // ---- 通道：微信 ----登录进程的启动、输出解析与状态推进都在 process-manager 内完成，这里只做接口映射。
   ipcMain.handle("channel:wechat:login", async (_event, options = {}) => {
     appendWechatLoginLog(`login requested restart=${Boolean(options?.restart)}`);
     // 重新绑定的停进程/复用热码由 waitForWechatQr 统一处理。
@@ -215,8 +215,6 @@ async function renderQrSvg(data) {
   ipcMain.handle("channel:wechat:status", () => ({ ...gateway.getWechatLoginSnapshot(), runtimeWarm: isRuntimeWarm() }));
   // 面板打开时预热登录会话：让"重新绑定"能立刻拿到二维码（已绑定时也能预热）。
   ipcMain.handle("channel:wechat:prewarm", () => ({ ok: true, prewarmed: gateway.prewarmWechatLogin({ force: true }) }));
-  // 启动加载页调用：等首次冷启动完成（二维码就绪）再返回，让用户进向导时组件已经热了。
-  ipcMain.handle("channel:wechat:warmup", () => gateway.warmupWechatRuntime());
   // 各通道连接状态摘要：向导据此判断"已接入至少一个平台"，可以进入下一步。
   ipcMain.handle("channel:summary", () => channels.channelSummary());
 

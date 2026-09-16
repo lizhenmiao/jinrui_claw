@@ -1,9 +1,7 @@
 /**
  * 主进程脚本字节码编译（在 Electron 的 Node 环境中运行，保证 V8 版本一致）：
- * 把 src/main 下的 .js 编译为 .jsc，并让 bytenode 把加载器存根原地写回原 .js 路径，
- * 使安装包内不再存在明文业务源码。由 scripts/dist.mjs 在备份/还原流程中调用。
- * 注意：preload 不编译——渲染进程在启用 asar 完整性校验的安装包内加载字节码
- * 会触发 0xC0000005 崩溃，preload 仅含 contextBridge 接线、无敏感逻辑，保持源码。
+ * 把 src/main 下的 .js 编译为 .jsc，并让 bytenode 把加载器存根原地写回原 .js 路径，使安装包内不再存在明文业务源码。由 scripts/dist.mjs 在备份/还原流程中调用。
+ * 注意：preload 不编译——渲染进程在启用 asar 完整性校验的安装包内加载字节码会触发 0xC0000005 崩溃，preload 仅含 contextBridge 接线、无敏感逻辑，保持源码。
  */
 const fs = require("fs");
 const path = require("path");

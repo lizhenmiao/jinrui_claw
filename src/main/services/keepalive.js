@@ -1,10 +1,8 @@
 /**
  * 定时维护任务：客户端与后台/授权平台之间的"续命"动作，统一在这里调度。
  * ① 后台心跳：定时打 /api/client/device/ping，让后台的"最近在线"保持新鲜；
- * ② 订阅令牌保活：access_token 到期前用 refresh_token 换新（refresh_token 同时轮转），
- *    换到新令牌后由轮换事件立刻回写 provider 的 apiKey，必要时重启网关读取新令牌。
- * 只有 refresh_token 也失效（invalid_grant）时才算登录失效：oauth 层已清登录态，
- * 界面下一次调用会收到"登录已失效"并回到登录页。
+ * ② 订阅令牌保活：access_token 到期前用 refresh_token 换新（refresh_token 同时轮转），换到新令牌后由轮换事件立刻回写 provider 的 apiKey，必要时重启网关读取新令牌。
+ * 只有 refresh_token 也失效（invalid_grant）时才算登录失效：oauth 层已清登录态，界面下一次调用会收到"登录已失效"并回到登录页。
  */
 const timing = require("../../shared/timing.json");
 const oauth = require("./oauth");
@@ -49,8 +47,7 @@ async function heartbeatOnce() {
 }
 
 /**
- * 订阅 Key 自愈：provider 标着 server 却没有 Key（配置被写坏、换机器带了旧配置）时，
- * 用当前登录态重新同步一次，把 Key 补回去；网关在跑则重启读取新 Key。
+ * 订阅 Key 自愈：provider 标着 server 却没有 Key（配置被写坏、换机器带了旧配置）时，用当前登录态重新同步一次，把 Key 补回去；网关在跑则重启读取新 Key。
  */
 async function repairSubscriptionKey() {
   try {

@@ -1,8 +1,7 @@
 /**
  * 子进程编排：网关、钉钉 bridge、通道登录进程的启动与停止。
  * 子进程统一使用 Electron 自带 Node（ELECTRON_RUN_AS_NODE），不再内置 node.exe。
- * 所有子进程登记到看护进程（process-warden）：主进程无论正常退出还是被强杀，
- * 看护进程都会终止整棵进程树，保证 U 盘句柄全部释放。
+ * 所有子进程登记到看护进程（process-warden）：主进程无论正常退出还是被强杀，看护进程都会终止整棵进程树，保证 U 盘句柄全部释放。
  */
 const fs = require("fs");
 const net = require("net");
@@ -13,7 +12,7 @@ const { getAppConfig } = require("../app-config");
 const timing = require("../../shared/timing.json");
 const { prepareRuntimeConfig } = require("./secret-crypto");
 const { readConfig, writeConfig, ensurePluginLoadPath } = require("./config-store");
-const { ensureModules, isRuntimeWarm, markRuntimeWarm, moduleEntryPath } = require("./modules");
+const { requireModulesDir, isRuntimeWarm, markRuntimeWarm, moduleEntryPath } = require("./modules");
 const { syncBackendModels, reportEvent } = require("./backend-client");
 const { appendLogLine, appendRawLog } = require("./logs");
 const { createQrSession } = require("./qr-session");
@@ -22,8 +21,7 @@ let gatewayProcess = null;
 let dingTalkBridgeProcess = null;
 let wardenProcess = null;
 
-// 微信登录会话：登录子进程由本模块独占，其 stdout 输出同时驱动二维码与状态机，
-// 因此预热、刷新、UI 轮询三条路径共享同一份状态，不会出现"已扫码却仍提示待扫码"。
+// 微信登录会话：登录子进程由本模块独占，其 stdout 输出同时驱动二维码与状态机，因此预热、刷新、UI 轮询三条路径共享同一份状态，不会出现"已扫码却仍提示待扫码"。
 // 状态与过期自动重建策略由 qr-session 统一维护，这里只管子进程与输出解析。
 let wechatLoginProcess = null;
 /** 用户主动"重新绑定"期间为 true：此时即使已绑定也展示二维码。 */
@@ -102,11 +100,11 @@ function registerChild(child) {
 }
 
 /** 启动业务子进程：日志落盘、环境指向模块缓存与数据目录，可注入附加环境变量。
- *  pipeStdout: 输出走管道返回给调用方（而非日志文件），由调用方自行消费与落盘。 */
+ * pipeStdout: 输出走管道返回给调用方（而非日志文件），由调用方自行消费与落盘。 */
 function startChild(name, scriptPath, args, options = {}) {
   const { dataDir, stateDir, configPath, productRoot } = getPaths();
   const logsDir = logDirEnsure();
-  const modulesDir = ensureModules();
+  const modulesDir = requireModulesDir();
   const stdio = options.pipeStdout
     ? ["ignore", "pipe", "pipe"]
     : ["ignore", fs.openSync(path.join(logsDir, `${name}.log`), "a"), fs.openSync(path.join(logsDir, `${name}.err.log`), "a")];
@@ -233,7 +231,7 @@ async function startGateway() {
   } catch (error) {
     console.error("[gateway] ensure chatCompletions failed:", error.message);
   }
-  try { await syncBackendModels("gateway-start"); } catch { /* 后台同步失败不阻塞启动 */ }
+  try { await syncBackendModels(); } catch { /* 后台同步失败不阻塞启动 */ }
   const child = startChild("gateway", moduleEntryPath(), ["gateway", "--port", String(gatewayPort()), "--verbose"], { runtimeConfig: true });
   gatewayProcess = child;
   const reachable = await waitForPort(gatewayPort(), timing.gateway.startWaitTimeoutMs);
@@ -267,7 +265,7 @@ async function stopGateway() {
 let restartChain = Promise.resolve();
 
 /** 待重启原因：通道保存/扫码绑定只写配置并登记在这里，由界面的"重启生效"按钮一次应用，
- *  避免连改几个通道要挨个等十几秒的网关重启。网关真正启动时读的是最新配置，标记随之清空。 */
+ * 避免连改几个通道要挨个等十几秒的网关重启。网关真正启动时读的是最新配置，标记随之清空。 */
 const pendingRestartReasons = new Set();
 
 /** 标记"有配置变更等待网关重启加载"。 */
@@ -339,8 +337,7 @@ function isWeixinChannelEnabled() {
 
 /**
  * 登录子进程输出 → 界面状态映射。
- * 文案取自微信插件（openclaw-weixin）真实 stdout：扫码后先打印"正在验证"，
- * 绑定成功打印"已将此 OpenClaw 连接到微信"。同一条输出命中多条时按本表顺序取首个。
+ * 文案取自微信插件（openclaw-weixin）真实 stdout：扫码后先打印"正在验证"，绑定成功打印"已将此 OpenClaw 连接到微信"。同一条输出命中多条时按本表顺序取首个。
  */
 const WECHAT_LOGIN_SIGNALS = [
   { status: "success", message: "已扫码并绑定成功，微信通道已启用", patterns: ["已将此 OpenClaw 连接到微信", "已连接过此 OpenClaw", "绑定成功", "登录成功"] },
@@ -409,7 +406,7 @@ function consumeWechatLoginOutput(child) {
 }
 
 /** 拉起一次登录尝试（会话的 start 钩子）：注册插件路径 → 起子进程 → 接输出。
- *  状态、二维码与自动重建计数由 wechatSession 维护，这里只管进程本身。 */
+ * 状态、二维码与自动重建计数由 wechatSession 维护，这里只管进程本身。 */
 function spawnWechatLoginChild(options = {}) {
   if (options.rebinding) wechatRebinding = true;
   killWechatLoginProcess();
@@ -423,7 +420,7 @@ function spawnWechatLoginChild(options = {}) {
       config.plugins.entries["openclaw-weixin"] = { ...(config.plugins.entries["openclaw-weixin"] || {}), enabled: true };
       writeConfig(config);
     }
-  } catch { /* 插件注册失败时仍尝试启动，行为与旧版一致 */ }
+  } catch { /* 插件注册失败不阻塞扫码，登录子进程照常拉起 */ }
   // 二维码链接需从子进程输出流中实时提取，因此必须走管道而非日志文件。
   const child = startChild("wechat-login", moduleEntryPath(), ["channels", "login", "--channel", "openclaw-weixin"], { runtimeConfig: true, pipeStdout: true });
   wechatLoginProcess = child;
@@ -451,7 +448,7 @@ function killWechatLoginProcess() {
 }
 
 /** 出厂重置配套：清空微信登录的内存态（扫码会话的成功标记、重绑过程）。
- *  主进程不随重置重启，不清的话界面会凭旧会话继续显示"已绑定"。 */
+ * 主进程不随重置重启，不清的话界面会凭旧会话继续显示"已绑定"。 */
 function resetWechatLoginState() {
   killWechatLoginProcess();
   wechatSession.reset();
@@ -533,12 +530,11 @@ function waitForWechatQr(options = {}) {
 }
 
 /**
- * 后台预生成微信登录二维码（仅当微信通道已启用）。
- * force=true 由面板打开时调用：即使已绑定也预热，用户点"重新绑定"时能立刻拿到二维码。
+ * 预生成微信登录二维码，让二维码在用户到 BOT 页之前就备好。
+ * 通道没启用时也拉起来（这是"预热"而不是"绑定"）；已绑定微信号则跳过，除非 force（用户点"重新绑定"要立刻出码）。
  */
 function prewarmWechatLogin(options = {}) {
   if (getWechatLoginProcess()) return false;
-  // warmup=true 由启动阶段调用：通道还没启用也提前把组件拉起来，把首次冷启动的等待挪到向导之前。
   if (!options.warmup && !isWeixinChannelEnabled()) return false;
   if (isWeixinBound() && !options.force) return false;
   try {
@@ -550,14 +546,18 @@ function prewarmWechatLogin(options = {}) {
 }
 
 /**
- * 启动阶段等首次冷启动完成：本机组件还没热过时，一直等到二维码就绪（或超时）再返回，
- * 让启动加载页把这一分钟挡住，用户进向导后 BOT 页直接有码。
- * 已经热过（有 .zgy-warm 标记）或已绑定微信号时立即返回，不额外拉起进程。
+ * 启动阶段等微信组件就绪（登录子进程出码即算就绪），把首次冷启动的等待收进启动加载页，
+ * 这样用户进向导后到 BOT 页直接有码，不会出现"启动等一次、进 BOT 页再等一次"的两段等待。
+ * 已热过（有 .zgy-warm 标记）或已绑定微信号时立即返回，不拉起进程、不加长启动。
+ * onStage 把当前阶段文案推给加载页；超时上限取 timing.boot.warmupTimeoutMs。
  */
-async function warmupWechatRuntime() {
+async function warmupWechatRuntime(onStage) {
   if (isRuntimeWarm() || isWeixinBound()) return { ready: true, warmed: false };
+  onStage("正在加载微信组件（首次在本机运行需要一分钟左右）…");
+  prewarmWechatLogin({ warmup: true });
   const qr = await waitForWechatQr({ timeoutMs: timing.boot.warmupTimeoutMs });
   appendLogLine("electron-shell.log", qr ? "wechat runtime ready" : "wechat runtime warmup timed out");
+  // 超时不拦启动：出码失败的原因（网络、平台侧）会在面板上显示，用户可以在那里重试。
   return { ready: Boolean(qr), warmed: true };
 }
 
@@ -593,10 +593,10 @@ module.exports = {
   startDingTalkBridge,
   startGateway,
   startWechatLoginChild,
-  warmupWechatRuntime,
   stopDingTalkBridge,
   stopGateway,
   stopProcessTree,
   waitForPort,
   waitForWechatQr,
+  warmupWechatRuntime,
 };

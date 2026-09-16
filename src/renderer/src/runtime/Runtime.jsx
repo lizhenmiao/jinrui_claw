@@ -1,7 +1,5 @@
 /**
- * 运行页（最终设计）：品牌 + 状态胶囊居中，副标题，两项统计，
- * 运行日志，控制行（一键修复/启动/停止），底部左侧链接 + 右侧大按钮。
- * 对照旧实现 .runtime 最终布局：不渲染插件行、U 盘状态与状态灯。
+ * 运行页：品牌 + 状态胶囊居中，副标题，两项统计，运行日志，控制行（一键修复/启动/停止），底部左侧链接 + 右侧大按钮；不渲染插件行、U 盘状态与状态灯。
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import desktopApi from "../api.js";
@@ -9,6 +7,7 @@ import { configuredChannelNames, pendingRestartText } from "../channels.js";
 import timing from "../../../shared/timing.json";
 import { Button, AsyncButton, useToast } from "../components/ui.jsx";
 import { ChannelWorkbench } from "../components/ChannelWorkbench.jsx";
+import { LoadingScreen } from "../components/LoadingScreen.jsx";
 
 /** 网关状态徽标：运行中（绿）/ 启动中·停止中（黄）/ 失败·已停止（红）。 */
 function GatewayBadge({ state }) {
@@ -37,6 +36,8 @@ export default function Runtime() {
   const [licenseText, setLicenseText] = useState("");
   // 通道设置整窗浮层：网关运行中也能进面板批准配对、切私聊策略、改绑/换凭据。
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 恢复出厂期间盖加载页：清数据要停子进程、删几千个文件，没有反馈就会被当成"点了就卡死"。
+  const [resetting, setResetting] = useState(false);
   const startingRef = useRef(false);
   // 日志框：贴底跟随（用户上翻即暂停），选中文字时暂停刷新以便复制。
   const logBoxRef = useRef(null);
@@ -213,10 +214,12 @@ export default function Runtime() {
   /** 出厂重置：清空模型配置、通道绑定与凭据、聊天数据（授权与插件缓存保留），回到向导首页。 */
   const factoryReset = async () => {
     if (!window.confirm("恢复出厂会清空模型配置、通道绑定与凭据、聊天数据，回到最初状态（授权与插件缓存保留）。确定继续？")) return;
+    setResetting(true);
     try {
       await desktopApi.config.reset();
       window.location.reload();
     } catch (error) {
+      setResetting(false);
       toast.show(error.message, "err");
     }
   };
@@ -342,6 +345,9 @@ export default function Runtime() {
           </div>
         </div>
       )}
+
+      {/* 恢复出厂遮罩：清数据要停子进程再删掉几千个文件，盖住并说明，避免被当成"点了没反应"。 */}
+      {resetting && <LoadingScreen overlay message="正在清除数据，请稍候…" />}
 
       {toast.element}
     </div>

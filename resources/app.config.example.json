@@ -1,0 +1,74 @@
+{
+  "product": {
+    "displayName": "小龙虾 U盘版",
+    "version": "3.0.0"
+  },
+  "ui": {
+    "toastPosition": "top-right"
+  },
+  "ports": {
+    "gateway": 18789
+  },
+  "channels": {
+    "docs": {
+      "wecom": "https://open.work.weixin.qq.com/help2/pc/21677",
+      "feishu": "https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-app-id",
+      "dingtalk-channel": "https://open.dingtalk.com/document/dingstart/create-application"
+    }
+  },
+  "backend": {
+    "url": "http://127.0.0.1:15000"
+  },
+  "oauth": {
+    "issuer": "http://localhost:8080",
+    "authorizationOrigin": "http://localhost:8080",
+    "clientId": "jr_client_替换为你的公共客户端ID",
+    "clientType": "public",
+    "redirectUri": "http://127.0.0.1:18790/api/auth/callback",
+    "scopes": "openid profile subscription:read models:read inference"
+  },
+  "models": {
+    "typeDefaults": {
+      "openai": {
+        "providerId": "openai",
+        "label": "open AI",
+        "model": "gpt-4o-mini",
+        "baseUrl": "https://api.openai.com/v1",
+        "api": "openai-completions"
+      },
+      "anthropic": {
+        "providerId": "anthropic",
+        "label": "Anthropic",
+        "model": "claude-3-5-sonnet-latest",
+        "baseUrl": "https://api.anthropic.com/v1",
+        "api": "anthropic-messages"
+      }
+    }
+  },
+  "subscription": {
+    "plansPageSuffix": "coding-plan",
+    "plans": [
+      {
+        "name": "Lite plan",
+        "price": "¥ 39.90",
+        "period": "/ 月",
+        "desc": "会员周期内容 ZgyClaw 持续可用",
+        "popular": false
+      },
+      {
+        "name": "Lite plan",
+        "price": "¥ 99.90",
+        "period": "/ 月",
+        "desc": "会员周期内容 ZgyClaw 持续可用",
+        "popular": true
+      },
+      {
+        "name": "Lite plan",
+        "price": "¥ 199.90",
+        "period": "/ 月",
+        "desc": "适合处理更多任务",
+        "popular": false
+      }
+    ]
+  }
+}

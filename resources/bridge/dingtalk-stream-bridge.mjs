@@ -3,9 +3,7 @@
  * 钉钉 Stream 桥接进程：
  * - 在网关进程之外维持钉钉 Stream 长连接（比网关内循环更稳定）
  * - 收到机器人消息后调用本地 OpenClaw /v1/chat/completions 获取回复
- * - 通过 sessionWebhook 回帖，并立即 ACK 防止钉钉约 60 秒后重投
- * 由主进程（process-manager）启动；凭证与网关令牌经环境变量注入，
- * 日志写到数据目录 logs/dingtalk-stream-bridge.log。
+ * - 通过 sessionWebhook 回帖，并立即 ACK 防止钉钉约 60 秒后重投由主进程（process-manager）启动；凭证与网关令牌经环境变量注入，日志写到数据目录 logs/dingtalk-stream-bridge.log。
  */
 import fs from "node:fs";
 import path from "node:path";

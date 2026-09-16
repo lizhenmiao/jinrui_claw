@@ -1,7 +1,6 @@
 /**
  * 看护进程：监控主进程与业务子进程。
- * 主进程消失（正常退出、崩溃或被强杀）时终止全部登记的子进程树，
- * 保证 U 盘句柄全部释放。
+ * 主进程消失（正常退出、崩溃或被强杀）时终止全部登记的子进程树，保证 U 盘句柄全部释放。
  * 用法：node process-warden.cjs <childPidsFile> <ownerPid>
  */
 const fs = require("fs");
@@ -49,8 +48,7 @@ function cleanup() {
 process.on("SIGTERM", cleanup);
 process.on("SIGINT", cleanup);
 
-// 常驻轮询：主进程消失即清杀子进程。间隔由主进程通过 WARDEN_CHECK_INTERVAL_MS 下发
-// （取值来自 src/shared/timing.json），未下发时退回默认值。
+// 常驻轮询：主进程消失即清杀子进程。间隔由主进程通过 WARDEN_CHECK_INTERVAL_MS 下发（取值来自 src/shared/timing.json），未下发时退回默认值。
 setInterval(() => {
   if (!ownerAlive()) cleanup();
 }, Number(process.env.WARDEN_CHECK_INTERVAL_MS) || 1500);

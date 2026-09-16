@@ -23,8 +23,7 @@ export function Button({ variant = "primary", size = "md", className = "", ...pr
 }
 
 /**
- * 异步操作按钮：点击后自动置灰并转圈，请求完成（或失败）后恢复，防止重复提交，
- * 也让"要等十几秒"的操作（保存触发网关重启等）有可见的进行中状态。
+ * 异步操作按钮：点击后自动置灰并转圈，请求完成（或失败）后恢复，防止重复提交，也让"要等十几秒"的操作（保存触发网关重启等）有可见的进行中状态。
  * 样式完全由 className 提供，与各面板原有按钮保持一致。
  */
 export function AsyncButton({ onClick, busyText = "处理中...", children, className = "", disabled = false, ...props }) {
@@ -139,8 +138,7 @@ export function useToast() {
       <span className="text-body">{toast.message}</span>
     </div>
   ) : null;
-  // 返回值保持稳定引用：toast 常被放进 effect/useMemo 依赖，
-  // 依赖 rawToast 状态而非新建的 JSX，避免每次渲染都换引用导致重复请求。
+  // 返回值保持稳定引用：toast 常被放进 effect/useMemo 依赖，依赖 rawToast 状态而非新建的 JSX，避免每次渲染都换引用导致重复请求。
   return React.useMemo(() => ({ show, element }), [show, toast]);
 }
 

@@ -1,6 +1,5 @@
 /**
- * 开发启动器：并行拉起 Vite 开发服务器与 Electron 主进程，
- * 主进程通过 VITE_DEV_SERVER_URL 加载渲染页面；Ctrl+C 一并退出。
+ * 开发启动器：并行拉起 Vite 开发服务器与 Electron 主进程，主进程通过 VITE_DEV_SERVER_URL 加载渲染页面；Ctrl+C 一并退出。
  */
 import { spawn } from "node:child_process";
 import http from "node:http";

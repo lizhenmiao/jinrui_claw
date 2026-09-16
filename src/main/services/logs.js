@@ -15,7 +15,7 @@ function sanitizeUiLogLine(message) {
     .replace(/\r?\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  // 注意：不能把字面 \r、\n 两字符替换成空格——Windows 路径里的 \resources、\node_modules 会被吃掉字母。
+  // 不能把字面的 \r、\n 两字符替换成空格：Windows 路径里的 \resources、\node_modules会被吃掉首字母，日志里就变成 " esources" 这种残缺路径。
   if (!text) return "";
   if (/liteapp\.weixin\.qq\.com|qrcode=|qrlogin|二维码链接/i.test(text)) return "";
   const blockCount = (text.match(/[\u2580-\u259f]/g) || []).length;
@@ -52,8 +52,7 @@ function logLineTime(line) {
 
 /**
  * 读取最近的运行日志（排除微信登录日志，其由通道流程单独消费）。
- * 固定合并网关主日志与错误日志并按时间戳排序：错误日志（如插件抛错）与主日志一起展示，
- * 也不再"哪个文件刚被写入就整个切过去"，避免界面内容来回跳变。
+ * 固定合并网关主日志与错误日志并按时间戳排序：错误日志（如插件抛错）与主日志一起展示，也不再"哪个文件刚被写入就整个切过去"，避免界面内容来回跳变。
  */
 function readRecentLogs() {
   try {

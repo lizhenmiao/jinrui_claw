@@ -1,8 +1,10 @@
 /**
- * U 盘设备指纹：以卷序列号（Windows）或卷 UUID（macOS）为稳定身份源，
- * 哈希出设备指纹，供授权绑定与后台设备上报使用。
+ * U 盘设备指纹：以卷序列号（Windows）或卷 UUID（macOS）为稳定身份源，哈希出设备指纹，供授权绑定与后台设备上报使用；
+ * 本机标识（machineId）同样在这里推导，用于后台区分"哪台电脑"。
  */
 const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { getPaths } = require("../paths");
@@ -87,7 +89,10 @@ function readMacDriveInfo(mountRoot) {
 }
 
 let cachedDriveInfo = null;
-/** 读取 U 盘信息；Windows 下要起 PowerShell，进程生命周期内缓存一份（拔盘即退出应用，不会读到旧值）。 */
+/**
+ * 读取 U 盘信息。Windows 下要起一次 PowerShell，所以进程生命周期内只读一次并缓存：
+ * 拔盘会直接退出应用，不存在读到过期值的场景。
+ */
 function readDriveInfo() {
   if (cachedDriveInfo) return cachedDriveInfo;
   const root = driveRoot();
@@ -132,4 +137,62 @@ function getUsbId() {
   return `DEV-${crypto.createHash("sha256").update(driveRoot()).digest("hex").slice(0, 16).toUpperCase()}`;
 }
 
-module.exports = { getDriveInfo: readDriveInfo, getFingerprint, getUsbId, mask };
+/**
+ * 本机稳定身份源：Windows 取注册表 MachineGuid（装一次系统就固定）、macOS 取 IOPlatformUUID（主板级唯一）、Linux 取 /etc/machine-id。
+ * 读不到时返回空串，由调用方回落。
+ */
+function readMachineIdentity() {
+  try {
+    if (process.platform === "win32") {
+      const stdout = execFileSync("reg", ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+      });
+      return (stdout.match(/MachineGuid\s+REG_SZ\s+(\S+)/i) || [])[1] || "";
+    }
+    if (process.platform === "darwin") {
+      const stdout = execFileSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", timeout: 5000 });
+      return (stdout.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/) || [])[1] || "";
+    }
+    for (const file of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+      try {
+        const value = fs.readFileSync(file, "utf8").trim();
+        if (value) return value;
+      } catch { /* 换下一个候选文件 */ }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+let cachedMachineId = "";
+/**
+ * 后台上报用的本机标识：盐 + 操作系统稳定身份的 SHA-256 摘要（不外传注册表/主板原值）。
+ * 确定性推导是关键——恢复出厂设置、删掉 data 目录都算回同一个 ID，后台设备记录才不会把同一台机器记成好几台。
+ * 身份源读不到时用上次缓存的值（machine-id.txt），再退一步才用主机名等信息拼，避免个别机器读注册表失败导致每次启动换一个 ID。
+ */
+function getMachineId() {
+  if (cachedMachineId) return cachedMachineId;
+  const file = path.join(getPaths().stateDir, "machine-id.txt");
+  const identity = readMachineIdentity();
+  if (identity) {
+    cachedMachineId = `MACHINE-${crypto.createHash("sha256")
+      .update(PRODUCT_SALT).update("\n").update(process.platform).update("\n").update(identity)
+      .digest("hex").slice(0, 24).toUpperCase()}`;
+  } else {
+    let stored = "";
+    try { stored = fs.readFileSync(file, "utf8").trim(); } catch { /* 首次或已被清空 */ }
+    cachedMachineId = stored || `MACHINE-${crypto.createHash("sha256")
+      .update(PRODUCT_SALT).update("\n").update([os.hostname(), os.userInfo().username, process.platform, process.arch].join("|"))
+      .digest("hex").slice(0, 24).toUpperCase()}`;
+  }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, cachedMachineId + "\n", "utf8");
+  } catch { /* 缓存写不进去不影响本次上报 */ }
+  return cachedMachineId;
+}
+
+module.exports = { getDriveInfo: readDriveInfo, getFingerprint, getMachineId, getUsbId, mask };

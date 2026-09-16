@@ -1,14 +1,23 @@
 /**
- * QQ 机器人扫码绑定：二维码与回调由官方连接器（@tencent-connect/qqbot-connector）提供，
- * 状态推进、过期自动重建、等待与通知交给通用扫码会话（qr-session），
- * 绑定成功后把凭据写进通道配置。
+ * QQ 机器人扫码绑定：二维码与回调由官方连接器（@tencent-connect/qqbot-connector）提供，状态推进、过期自动重建、等待与通知交给通用扫码会话（qr-session），绑定成功后把凭据写进通道配置。
  */
+const path = require("path");
 const { pathToFileURL } = require("url");
 const timing = require("../../shared/timing.json");
+const { getPaths } = require("../paths");
 const { findQQBotConnectorEntry } = require("./modules");
 const { applyQQBotCredentials, readQQBotBinding } = require("./channels");
 const { createQrSession } = require("./qr-session");
 const gateway = require("./process-manager");
+
+/**
+ * 加载 ESM 形态的官方连接器。
+ * 不能在这里直接写 import()：安装包内主进程是 V8 字节码，bytenode 用 vm.Script 加载、没有 dynamic import 回调，直接 import() 会抛 "A dynamic import callback was not specified."，表现是面板一直"生成中..."。改由随 resources 明文分发、不参与字节码编译的助手代为 import。
+ */
+function importConnector(entry) {
+  const importEsm = require(path.join(getPaths().bridgeDir, "esm-import.cjs"));
+  return importEsm(pathToFileURL(entry).href);
+}
 
 /** 当前连接器的清理函数；重新发起或绑定成功时清掉，避免上一个会话继续回调。 */
 let cleanupCurrent = null;
@@ -29,7 +38,7 @@ function cleanupConnector() {
 function startConnector() {
   const entry = findQQBotConnectorEntry();
   if (!entry) throw new Error("QQBot 插件未安装，请先安装官方 @openclaw/qqbot 插件。");
-  import(pathToFileURL(entry).href)
+  importConnector(entry)
     .then(({ startQrConnect }) => {
       cleanupCurrent = startQrConnect({
         onQrDisplayed: (qrUrl) => session.reportQr(qrUrl),

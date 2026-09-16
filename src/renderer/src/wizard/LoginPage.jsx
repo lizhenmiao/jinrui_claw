@@ -1,7 +1,5 @@
 /**
- * 向导登录引导页：对照 2.0 设计稿逐项还原 —— 内容块整体垂直居中，
- * 左上双行标题、右上龙虾家族合影（压横幅上沿）、白色横幅（ZgyClaw + 状态按钮组）、
- * 三行特性列表。比例按 1440×1024 设计稿等比换算。
+ * 向导登录引导页：对照 2.0 设计稿逐项还原 —— 内容块整体垂直居中，左上双行标题、右上龙虾家族合影（压横幅上沿）、白色横幅（ZgyClaw + 状态按钮组）、三行特性列表。比例按 1440×1024 设计稿等比换算。
  */
 import React, { useEffect, useRef, useState } from "react";
 import desktopApi from "../api.js";
@@ -29,8 +27,7 @@ export default function LoginPage({ context }) {
   useEffect(() => () => clearInterval(pollTimer.current), []);
 
   useEffect(() => {
-    // 进页面校验收据：本地有会话时再用一次真实请求确认仍然有效，
-    // 已被服务端吊销的会话会在这里被清除并回到"立即登录"。
+    // 进页面校验收据：本地有会话时再用一次真实请求确认仍然有效，已被服务端吊销的会话会在这里被清除并回到"立即登录"。
     (async () => {
       try {
         const status = await desktopApi.account.status();
