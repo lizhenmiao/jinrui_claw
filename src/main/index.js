@@ -48,21 +48,11 @@ function parseLicenseArg() {
   return inline ? inline.slice("--license=".length).trim().replace(/^["']|["']$/g, "") : "";
 }
 
-/** 后台拒绝时的处理建议：售后照着做就能解决，不用回来查代码。 */
-function backendRejectionHint(code) {
-  if (code === "USB_MISMATCH") return "该授权码已经绑定过别的 U 盘。到管理后台清空这条授权的 U 盘 ID 后重新执行本命令。";
-  if (code === "LICENSE_NOT_FOUND") return "管理后台里没有这个授权码。请先在后台新建授权，授权码要与命令里输入的完全一致。";
-  if (code === "LICENSE_DISABLED") return "这条授权在管理后台已被禁用，请启用后重试。";
-  if (code === "LICENSE_EXPIRED") return "这条授权已过期，请在管理后台延长到期时间后重试。";
-  return "请到管理后台核对这条授权的状态、到期时间与 U 盘绑定情况。";
-}
-
 /**
  * --bind-usb --license KEY：为当前 U 盘写绑定文件，并把该盘要用的授权码一起写进去。
- * 先向后台核对：核对通过等于同时在后台把这条授权绑到本盘（一码一盘）；
- * 核对被拒（授权不存在/禁用/过期/已绑别的盘）就不落盘，避免把配错的盘发给客户；
- * 后台连不上则写文件并警告，客户端首次启动时还会再校验一次。
- * 授权码是必需的：包内没有缺省值，写出不带授权码的绑定等于把一张打不开的盘发给客户。
+ * 绑定逻辑与界面激活共用 backend-client 的 bindUsbWithLicense（先核对后台、再落本地文件），
+ * 所以命令行与界面行为一致：被后台拒绝就不落盘，连不上则写文件并警告。
+ * 批量或脚本化绑定时用这条命令，单台机器也可以直接在界面里输入授权码。
  */
 async function runBindCommand() {
   const requestedKey = parseLicenseArg();
@@ -70,6 +60,7 @@ async function runBindCommand() {
   if (!requestedKey) {
     console.error("缺少 --license 参数：授权码随 U 盘走，包内没有缺省值，不写授权码的绑定客户端起不来。");
     console.error("请在管理后台新建授权码，然后执行：zgyclaw.exe --bind-usb --license XLX-XXXXXXXX");
+    console.error("（也可以在客户端界面的加载页里直接输入授权码绑定。）");
     console.error("未写入本地绑定文件。");
     return 1;
   }
@@ -79,23 +70,19 @@ async function runBindCommand() {
     console.error("未写入本地绑定文件。");
     return 1;
   }
-  const check = await checkBackendLicense({ licenseKey: requestedKey });
-  if (check.rejected) {
-    console.error(`授权码核对未通过：${check.message}`);
-    console.error(backendRejectionHint(check.code));
+
+  const result = await bindUsbWithLicense(requestedKey);
+  if (!result.ok) {
+    console.error(`授权码核对未通过：${result.message}`);
+    console.error(result.hint);
     console.error("未写入本地绑定文件。");
     return 1;
   }
-  if (!check.ok) {
-    console.warn(`警告：连不上后台（${check.message}），未能核对授权码；客户端首次启动时会再校验。`);
-  } else {
-    console.log("授权码核对通过，该授权已绑定本 U 盘。");
-  }
-
-  const result = license.bindUsb({ licenseKey: requestedKey });
+  if (result.unreachable) console.warn(`警告：${result.message}`);
+  else console.log(result.message);
   console.log(`本地授权文件：${result.filePath}`);
   console.log(`U 盘指纹：${result.maskedFingerprint}`);
-  console.log(`授权码：${requestedKey}`);
+  console.log(`授权码：${result.licenseKey}`);
   return 0;
 }
 
@@ -162,7 +149,10 @@ async function bootCore(onStage) {
   if (license.shouldRequireLicense()) {
     const verification = license.verify();
     if (!verification.ok) {
-      throw new Error(`${verification.message}\n\n该 U 盘尚未绑定授权，请联系售后处理。`);
+      // 界面据此把加载页换成"输入授权码"表单（绑定会同时写本地文件与后台记录）。
+      const error = new Error(`${verification.message}该 U 盘尚未绑定授权，请输入授权码完成绑定。`);
+      error.code = "LICENSE_REQUIRED";
+      throw error;
     }
   }
   logLine("license ok");
@@ -172,7 +162,10 @@ async function bootCore(onStage) {
   const backendLicense = await checkBackendLicense();
   // 只有后台明确拒绝（授权无效/过期/U 盘不匹配）才拦启动；连不上后台属"无法判定"，放过并记日志——否则后台故障或离线环境会让所有客户端集体打不开，此时本地授权仍在把关。
   if (backendLicense.rejected) {
-    throw new Error(backendLicense.message || "后台授权校验未通过。");
+    // 后台明确拒绝（授权不存在/禁用/过期/已绑别的盘）：也交给界面重新输入授权码，用户不必回到命令行。
+    const error = new Error(backendLicense.message || "后台授权校验未通过。");
+    error.code = "LICENSE_REQUIRED";
+    throw error;
   }
   if (backendLicense.ok && !backendLicense.skipped) {
     await syncBackendModels();
@@ -240,7 +233,7 @@ async function runBoot() {
     const message = error?.message || String(error);
     logLine(`boot failed: ${message}`);
     appendWechatLoginLog(`boot failed: ${message}`);
-    bootState = { status: "error", message };
+    bootState = { status: "error", message, code: error?.code || "" };
     sendBootState();
     return;
   } finally {

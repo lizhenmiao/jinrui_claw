@@ -11,6 +11,7 @@ const gateway = require("./services/process-manager");
 const { findQQBotConnectorEntry, findQQBotPluginPaths, isRuntimeWarm } = require("./services/modules");
 const { buildRepairChecks, runPortableRepair } = require("./services/repair");
 const { readRecentLogs, appendWechatLoginLog } = require("./services/logs");
+const { bindUsbWithLicense } = require("./services/backend-client");
 const { authCallbackResult, beginLogin, cancelLogin, status: oauthStatus, refresh: oauthRefresh, logout: oauthLogout, subscription, subscriptionModelConfig } = require("./services/oauth");
 const oauthListener = require("./services/oauth-listener");
 const channels = require("./services/channels");
@@ -111,7 +112,18 @@ async function renderQrSvg(data) {
   ipcMain.handle("repair:run", () => runPortableRepair());
 
   // ---- 授权 ----
-  ipcMain.handle("license:bind", () => license.bindUsb());
+  // 界面激活：把用户输入的授权码交给与命令行共用的绑定流程（先向后台核对，通过才落本地绑定文件）。
+  ipcMain.handle("license:bind", async (_event, input) => {
+    const licenseKey = String(input?.licenseKey || "").trim();
+    if (!license.isValidLicenseKey(licenseKey)) {
+      return { ok: false, message: "授权码格式不正确（只允许字母、数字、点、下划线、短横线，4~64 位）。" };
+    }
+    try {
+      return await bindUsbWithLicense(licenseKey);
+    } catch (error) {
+      return { ok: false, message: error.message };
+    }
+  });
   ipcMain.handle("license:info", () => license.buildLicenseInfo());
   ipcMain.handle("license:status", () => ({ required: license.shouldRequireLicense(), verification: license.verify() }));
 

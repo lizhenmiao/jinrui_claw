@@ -14,6 +14,8 @@ export default function App() {
   const [bootMessage, setBootMessage] = useState("正在准备运行组件…");
   // 启动未通过的原因；有值时加载页停住并显示原因（不再进入独立错误页）。
   const [bootFailure, setBootFailure] = useState("");
+  // 启动失败的错误码：LICENSE_REQUIRED 表示需要用户输入授权码，加载页据此换成激活表单。
+  const [bootCode, setBootCode] = useState("");
   const [configured, setConfigured] = useState(false);
   // 界面初始化只跑一次的闸：重试时复位。
   const uiReadyRef = useRef(false);
@@ -41,7 +43,10 @@ export default function App() {
       // 启动阶段的说明文案（例如首次解压组件）直接显示在加载页上，避免长时间白等。
       if (state.status === "booting") setBootMessage(state.message || "");
       if (state.status === "ready") void initUi();
-      if (state.status === "error") setBootFailure(state.message || "启动失败");
+      if (state.status === "error") {
+        setBootFailure(state.message || "启动失败");
+        setBootCode(state.code || "");
+      }
     };
     const unsubscribe = desktopApi.app.onBootState(applyBootState);
     // 页面加载可能晚于启动事件：先查一次当前状态，之后靠事件推进。
@@ -52,18 +57,33 @@ export default function App() {
     };
   }, [initUi]);
 
+  /** 重跑启动核心：清掉失败提示并复位界面闸（绑定授权码之后、或用户手动重试时调用）。 */
+  const retryBoot = useCallback(() => {
+    setBootFailure("");
+    setBootCode("");
+    uiReadyRef.current = false;
+    void desktopApi.app.retryBoot();
+  }, []);
+
+  /** 需要用户输入授权码：本地文件缺失/与盘不符、或后台明确拒绝授权码，都属于这一类。 */
+  const needsLicense = bootCode === "LICENSE_REQUIRED";
+
   if (phase === "loading") {
     return (
       <LoadingScreen
         message={bootMessage}
         failure={bootFailure || null}
+        activation={needsLicense ? {
+          message: bootFailure,
+          onSubmit: async (licenseKey) => {
+            const result = await desktopApi.license.bind({ licenseKey });
+            // 绑定成功后主进程重跑启动核心（本地授权文件与后台记录此时都已就位）。
+            if (result?.ok) retryBoot();
+            return result;
+          },
+        } : null}
         onRetry={bootFailure
-          ? () => {
-              // 重试：清掉失败提示并复位界面闸，让主进程重跑启动核心（--bind-usb 之后就能过）。
-              setBootFailure("");
-              uiReadyRef.current = false;
-              void desktopApi.app.retryBoot();
-            }
+          ? () => retryBoot()
           : undefined}
       />
     );

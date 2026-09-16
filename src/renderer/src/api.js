@@ -47,7 +47,7 @@ export const desktopApi = {
     run: () => getBridge().repair.run(),
   },
   license: {
-    bind: () => getBridge().license.bind(),
+    bind: (input) => getBridge().license.bind(input),
     info: () => getBridge().license.info(),
     status: () => getBridge().license.status(),
   },

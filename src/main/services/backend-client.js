@@ -8,7 +8,7 @@ const path = require("path");
 const { getPaths } = require("../paths");
 const { getAppConfig, configLookupHint } = require("../app-config");
 const { getUsbId, getDriveInfo, getMachineId } = require("./fingerprint");
-const { boundLicenseKey } = require("./license");
+const { bindUsb, boundLicenseKey } = require("./license");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
 const { readConfig, writeConfig } = require("./config-store");
 const timing = require("../../shared/timing.json");
@@ -57,7 +57,12 @@ function requireBackendSettings(override = {}) {
     throw new Error(`未配置管理后台地址（app.config.json 的 backend.url）。\n${configLookupHint()}`);
   }
   const licenseKey = String(override.licenseKey || settings.licenseKey).trim();
-  if (!licenseKey) throw new Error("本 U 盘未绑定授权码，请执行 zgyclaw.exe --bind-usb --license 你的授权码。\n（Windows 是 zgyclaw.exe，macOS 是 小龙虾U盘版.app/Contents/MacOS/zgyclaw）");
+  if (!licenseKey) {
+    // 界面据此把加载页换成"输入授权码"表单；命令行场景用 --license 传进来，不受影响。
+    const error = new Error("本 U 盘尚未绑定授权，请输入授权码完成绑定。");
+    error.code = "LICENSE_REQUIRED";
+    throw error;
+  }
   return { ...settings, licenseKey };
 }
 
@@ -286,9 +291,42 @@ async function syncBackendModels() {
   }
 }
 
+/** 后台拒绝授权码时的处理建议：让售后照着做就能解决，不用回来查代码。 */
+function licenseRejectionHint(code) {
+  if (code === "USB_MISMATCH") return "该授权码已经绑定过别的 U 盘。请到管理后台清空这条授权的 U 盘 ID 后重试。";
+  if (code === "LICENSE_NOT_FOUND") return "管理后台里没有这个授权码，请核对是否输错（区分大小写），或先在后台新建授权。";
+  if (code === "LICENSE_DISABLED") return "这条授权在管理后台已被禁用，请启用后重试。";
+  if (code === "LICENSE_EXPIRED") return "这条授权已过期，请在管理后台延长到期时间后重试。";
+  return "请到管理后台核对这条授权的状态、到期时间与 U 盘绑定情况。";
+}
+
+/**
+ * 为一个 U 盘写入授权绑定：先拿授权码向后台核对（核对通过等于同时在后台把该码绑到本盘），
+ * 通过、或后台连不上（属无法判定）才写本地绑定文件；后台明确拒绝则不落盘。
+ * 界面激活与命令行绑定共用这一条路径，保证两种入口行为一致。
+ */
+async function bindUsbWithLicense(licenseKey) {
+  const code = String(licenseKey || "").trim();
+  const check = await checkBackendLicense({ licenseKey: code });
+  if (check.rejected) {
+    return { ok: false, rejected: true, code: check.code, message: check.message, hint: licenseRejectionHint(check.code) };
+  }
+  const result = bindUsb({ licenseKey: code });
+  return {
+    ok: true,
+    unreachable: !check.ok,
+    message: check.ok ? "授权码核对通过，该授权已绑定本 U 盘。" : `连不上后台（${check.message}），已先写入本地绑定；客户端首次启动时会再校验一次。`,
+    filePath: result.filePath,
+    maskedFingerprint: result.maskedFingerprint,
+    licenseKey: code,
+  };
+}
+
 module.exports = {
+  bindUsbWithLicense,
   checkBackendLicense,
   devicePing,
+  licenseRejectionHint,
   readBackendSettings,
   reportEvent,
   requireBackendSettings,
