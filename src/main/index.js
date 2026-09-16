@@ -9,7 +9,7 @@ const { registerIpcHandlers } = require("./ipc");
 const modules = require("./services/modules");
 const license = require("./services/license");
 const processManager = require("./services/process-manager");
-const { checkBackendLicense, syncBackendModels, readBackendSettings } = require("./services/backend-client");
+const { bindUsbWithLicense, checkBackendLicense, syncBackendModels, readBackendSettings } = require("./services/backend-client");
 const { readConfig, writeConfig } = require("./services/config-store");
 const { startUsbWatch } = require("./services/usb-watch");
 const { appendWechatLoginLog } = require("./services/logs");
@@ -125,6 +125,18 @@ async function runCliCommand() {
 }
 
 /**
+ * 需要用户输入授权码时的统一出口：先把微信组件预热在后台拉起来，再抛出带码的错误。
+ * 用户在加载页填授权码的这段时间里，预热子进程正好在跑（它只依赖已解压的模块目录，
+ * 不需要授权文件）——填完重跑启动链时往往已经热好，省掉一次加载页；没热好就继续在加载页等。
+ */
+function failLicenseRequired(message) {
+  try { processManager.prewarmWechatLogin({ warmup: true }); } catch { /* 预热失败不影响授权提示 */ }
+  const error = new Error(message);
+  error.code = "LICENSE_REQUIRED";
+  return error;
+}
+
+/**
  * 启动核心：模块引导 → 授权校验 → 后台校验/模型同步 → 微信组件预热 → 残留进程清理。
  * 幂等可重试（模块已解压/授权已通过时秒回），失败抛错由状态机转成错误页。
  * onStage 把当前阶段推给加载页：解压与首次预热合起来要一两分钟，逐步说明在做什么，用户才不是白等。
@@ -150,22 +162,24 @@ async function bootCore(onStage) {
     const verification = license.verify();
     if (!verification.ok) {
       // 界面据此把加载页换成"输入授权码"表单（绑定会同时写本地文件与后台记录）。
-      const error = new Error(`${verification.message}该 U 盘尚未绑定授权，请输入授权码完成绑定。`);
-      error.code = "LICENSE_REQUIRED";
-      throw error;
+      throw failLicenseRequired(`${verification.message}该 U 盘尚未绑定授权，请输入授权码完成绑定。`);
     }
   }
   logLine("license ok");
 
   onStage("正在连接管理后台…");
   // 后台授权校验：配不全（缺地址或缺本盘授权码）时 checkBackendLicense 直接抛错，加载页显示原因并可重试，不会静默跳过联检。
-  const backendLicense = await checkBackendLicense();
+  // 缺授权码也属于"等用户填码"，同样先把预热拉起来再抛出。
+  let backendLicense;
+  try {
+    backendLicense = await checkBackendLicense();
+  } catch (error) {
+    throw error?.code === "LICENSE_REQUIRED" ? failLicenseRequired(error.message) : error;
+  }
   // 只有后台明确拒绝（授权无效/过期/U 盘不匹配）才拦启动；连不上后台属"无法判定"，放过并记日志——否则后台故障或离线环境会让所有客户端集体打不开，此时本地授权仍在把关。
   if (backendLicense.rejected) {
     // 后台明确拒绝（授权不存在/禁用/过期/已绑别的盘）：也交给界面重新输入授权码，用户不必回到命令行。
-    const error = new Error(backendLicense.message || "后台授权校验未通过。");
-    error.code = "LICENSE_REQUIRED";
-    throw error;
+    throw failLicenseRequired(backendLicense.message || "后台授权校验未通过。");
   }
   if (backendLicense.ok && !backendLicense.skipped) {
     await syncBackendModels();
