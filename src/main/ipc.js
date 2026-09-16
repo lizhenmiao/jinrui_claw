@@ -3,7 +3,7 @@
  * 渠道：向导/运行页/通道配置/授权/更新/账号。
  * 每个接口对应一个服务函数，返回结构与旧 REST API 保持等价语义。
  */
-const { ipcMain, shell, BrowserWindow } = require("electron");
+const { app, ipcMain, shell, BrowserWindow } = require("electron");
 const { getAppConfig, getPublicConfig } = require("./app-config");
 const { readConfig, writeConfig, writeSubscriptionProvider, isConfigured, resetAll } = require("./services/config-store");
 const license = require("./services/license");
@@ -252,7 +252,7 @@ async function renderQrSvg(data) {
     ok: true,
     info: {
       productId: getAppConfig().product?.displayName,
-      version: getAppConfig().product?.version,
+      version: getAppConfig().product?.version || app.getVersion(),
       platform: `${process.platform} / ${process.arch}`,
       runtime: `electron ${process.versions.electron} (node ${process.versions.node})`,
       ports: getAppConfig().ports,

@@ -283,8 +283,11 @@ zgyclaw.exe --check-license                     # 校验本盘授权，并打印
 2. 客户端检查到 `needUpdate: true` → 下载到 `data/update/downloads/` → 校验 sha256 后写替换脚本、退出主进程、由脚本覆盖并重启；
 3. sha256 不一致直接删包报错，不会替换。
 
-客户端上报给后台、参与版本比较的版本号取自 `app.config.json` 的 `product.version`（当前 `3.0.0`），
-发版时记得跟 `package.json` 的 `version` 一起改。
+版本号只有一处来源：**`package.json` 的 `version`**（打包后即 `app.getVersion()`）。
+它同时用于：产物文件名（`zgyclaw-windows-amd64-<版本>.zip`、`zgyclaw-mac-<arch>-<版本>.dmg`）、
+客户端上报给后台的 `clientVersion`、以及更新检查的版本比较。
+所以发版只需两步：把 `package.json` 的 `version` 改掉、打一个同名标签（如 `version` 为 `0.1.9` 就打 `v0.1.9`），
+两者就自动对齐；后台"版本管理"里的"最新版本"也填同一个号即可。
 
 ---
 

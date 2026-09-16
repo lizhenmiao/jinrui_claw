@@ -5,6 +5,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { app } = require("electron");
 const { getPaths } = require("../paths");
 const { getAppConfig, configLookupHint } = require("../app-config");
 const { getUsbId, getDriveInfo, getMachineId } = require("./fingerprint");
@@ -43,7 +44,8 @@ function readBackendSettings() {
   return {
     licenseKey: boundLicenseKey(),
     backendUrl: String(backend.url || "").trim().replace(/\/+$/, ""),
-    clientVersion: String(product.version || "unknown").trim(),
+    // 版本号单一来源：package.json（打包后即 app.getVersion()）；配置里若写了 product.version 则优先用它。
+    clientVersion: String(product.version || app.getVersion() || "unknown").trim(),
   };
 }
 

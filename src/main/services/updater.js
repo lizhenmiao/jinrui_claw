@@ -13,7 +13,7 @@ const timing = require("../../shared/timing.json");
 const { requireBackendSettings, reportEvent } = require("./backend-client");
 
 function currentVersion() {
-  return String(getAppConfig().product?.version || "0.0.0");
+  return String(getAppConfig().product?.version || app.getVersion() || "0.0.0");
 }
 
 function joinUrl(base, pathname) {

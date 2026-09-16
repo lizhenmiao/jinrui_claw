@@ -1,7 +1,6 @@
 {
   "product": {
-    "displayName": "小龙虾 U盘版",
-    "version": "3.0.0"
+    "displayName": "小龙虾 U盘版"
   },
   "ui": {
     "toastPosition": "top-right"
