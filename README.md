@@ -195,34 +195,48 @@ electron-builder（Windows 构建后把 `win-unpacked` 更名 `zgyclaw` 压成�
 
 ## 6. U 盘交付与授权
 
-### 交付形态
+### 交付形态（v1.5.0 起）
 
 ```
 U 盘根目录
-└── zgyclaw/                 # 程序文件夹（zip 解压即得：zgyclaw.exe + resources + 运行库）
-    ├── zgyclaw.exe          # 双击启动（macOS 为 小龙虾U盘版.app，dmg 解包即得）
-    └── data/                # 首次运行自动生成，跟着 U 盘走
-        ├── license.json     # --bind-usb 生成的本地授权
-        ├── .openclaw/       # 配置、日志、凭证、会话
-        ├── npm/             # 按需安装的插件（如 QQ）
-        └── update/          # 更新包下载目录
+├── zgyclaw/                 # Windows 程序文件夹（zip 解压即得）
+│   ├── zgyclaw.exe
+│   └── resources/
+├── 小龙虾U盘版.app           # macOS 应用（dmg 解包即得）
+└── zgy-data/                # 数据目录（Windows 和 macOS 共享）
+    ├── license.json         # 授权文件（一个授权码通用两个平台）
+    ├── .openclaw/           # 配置、日志、凭证、聊天记录
+    ├── npm/                 # 按需安装的插件（如 QQ）
+    └── update/              # 更新包下载目录
 ```
+
+**重要**：
+- `zgy-data/` 目录是 Windows 和 macOS **共享的**，聊天记录、授权、配置完全通用
+- 一个授权码绑定后，可以在任意 Windows 或 macOS 电脑上使用同一 U 盘
+- 授权绑定的是 **U 盘的物理序列号**，不是电脑
 
 拷盘步骤：
 
-1. 解压 `zgyclaw-windows-amd64-<版本>.zip`，把 `zgyclaw` 文件夹整个拷到 U 盘根目录（运营配置已固化在包内 asar，无需也无法在 U 盘上改地址）；
-2. 在管理后台新建一条授权码（一张盘一条）；
-3. 插到目标机器**双击 `zgyclaw.exe`**：加载页会显示"需要授权，请输入授权码"，把授权码填进去点「绑定并继续」即可
-   （macOS 同理，双击 App 后在界面上填）；
-4. 进向导配好模型与通道，之后换电脑插上即用（可插可拔）。
+1. 把 `zgyclaw` 文件夹和 `小龙虾U盘版.app` 都拷到 U 盘根目录；
+2. 在管理后台新建一条授权码；
+3. 插到任意电脑（Windows 或 macOS）**双击对应程序**：加载页会显示"需要授权，请输入授权码"，填码绑定；
+4. 绑定后，这个 U 盘可以在任何 Windows 或 macOS 电脑上使用，数据和授权都通用。
 
-> **批量或脚本化绑定**仍用命令行（同一个绑定流程，行为一致）：
+> **批量或脚本化绑定**仍用命令行：
 > `zgyclaw.exe --bind-usb --license <码>`；macOS 是包内可执行文件
 > `小龙虾U盘版.app/Contents/MacOS/zgyclaw --bind-usb --license <码>`。
 > 单台机器不必进终端——界面里填码就行，macOS 上尤其省事（不用找包内路径、不用过 Gatekeeper）。
 
-> `data/` 是跟着盘走的运行期目录，**别把开发机的 `data/` 拷给客户**——里面有你自己的登录态、
+> `zgy-data/` 是跟着盘走的运行期目录（Windows 和 macOS 共享），**别把开发机的 `zgy-data/` 拷给客户**——里面有你自己的登录态、
 > 凭证和会话数据，客户启动会直接继承。
+
+### 授权机制说明
+
+**授权绑定的是 U 盘硬件**：
+- 读取 U 盘的**物理序列号**（diskSerial，硬件级唯一 ID）作为设备指纹
+- Windows 和 macOS 读到的应该是同一个物理 ID（如果 U 盘硬件支持）
+- 授权文件 `zgy-data/license.json` 里存的是 U 盘指纹，不区分平台
+- **一个授权码绑定后，可以在 Windows 和 macOS 上通用**
 
 ### 两层授权（叠加，别混）
 

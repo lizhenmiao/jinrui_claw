@@ -299,13 +299,13 @@ export default function Runtime() {
 
       <div className="mx-auto mt-auto flex w-full max-w-[860px] items-center justify-between pt-[22px]">
         <div className="flex gap-[18px]">
-          <button type="button" className="text-[15px] text-link" onClick={showLicense}>授权信息</button>
-          <button type="button" className="text-[15px] text-link" onClick={checkUpdate}>检查更新</button>
+          <button type="button" className="text-[15px] text-link" onClick={showLicense} disabled={gatewayState !== "running"}>授权信息</button>
+          <button type="button" className="text-[15px] text-link" onClick={checkUpdate} disabled={gatewayState !== "running"}>检查更新</button>
         </div>
         <div className="flex gap-[14px]">
-          <Button variant="secondary" className="h-[55px] min-w-[150px] rounded-full text-base" onClick={() => setSettingsOpen(true)}>通道设置</Button>
-          <Button variant="secondary" className="h-[55px] min-w-[168px] rounded-full text-base" onClick={factoryReset}>恢复出厂设置</Button>
-          <Button className="h-[55px] min-w-[262px] rounded-full border-[#050505] bg-[#050505] text-base" onClick={openChat}>打开聊天窗口</Button>
+          <Button variant="secondary" className="h-[55px] min-w-[150px] rounded-full text-base" onClick={() => setSettingsOpen(true)} disabled={gatewayState !== "running"}>通道设置</Button>
+          <Button variant="secondary" className="h-[55px] min-w-[168px] rounded-full text-base" onClick={factoryReset} disabled={gatewayState !== "running"}>恢复出厂设置</Button>
+          <Button className="h-[55px] min-w-[262px] rounded-full border-[#050505] bg-[#050505] text-base" onClick={openChat} disabled={gatewayState !== "running"}>打开聊天窗口</Button>
         </div>
       </div>
 

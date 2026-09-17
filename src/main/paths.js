@@ -53,7 +53,12 @@ function modulesCacheKey(archivePath) {
 
 function build() {
   const productRoot = resolveProductRoot();
-  const dataDir = path.join(productRoot, "data");
+  
+  // 数据目录统一放在 U 盘根目录的 zgy-data，Windows 和 macOS 共享。
+  // macOS: productRoot 已经是 .app 的父目录（U 盘根目录）
+  // Windows: productRoot 是 zgyclaw/ 目录，父目录才是 U 盘根
+  const usbRoot = process.platform === "win32" ? path.resolve(productRoot, "..") : productRoot;
+  const dataDir = path.join(usbRoot, "zgy-data");
   const stateDir = path.join(dataDir, ".openclaw");
   // 打包后资源目录用 Electron 给的 process.resourcesPath：
   // Windows 目录分发下它就是 <安装目录>/resources（与按可执行文件目录推导等价），

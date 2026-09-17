@@ -1,6 +1,6 @@
 {
   "name": "zgy-claw-desktop",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "小龙虾 U 盘版客户端：便携式 AI 智能协作伙伴，数据随 U 盘即插即用",
   "main": "src/main/index.js",

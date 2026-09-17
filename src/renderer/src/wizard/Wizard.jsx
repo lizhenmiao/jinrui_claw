@@ -46,7 +46,7 @@ function Step({ label, icon, state }) {
   );
 }
 
-/** 底部导航：左下圆形返回/前进 + 居中步骤条 + BOT 页右下角的醒目"下一页"。 */
+/** 底部导航：左下圆形返回/前进 + 居中步骤条 + BOT 页右下角的醒目"下一步"。 */
 function WizardFooter({ page, step, onBack, onForward, forwardEnabled }) {
   if (!step) return null;
   return (
@@ -80,14 +80,14 @@ function WizardFooter({ page, step, onBack, onForward, forwardEnabled }) {
           />
         ))}
       </div>
-      {/* BOT 页通道多、左下角的小箭头不够显眼：接好一个工具后右下角出现实心"下一页"；一个都没接时不出现。 */}
+      {/* BOT 页通道多、左下角的小箭头不够显眼：接好一个工具后右下角出现实心"下一步"；一个都没接时不出现。 */}
       {page === "bot" && forwardEnabled && (
         <button
           type="button"
           className="absolute bottom-[16px] right-[36px] h-[40px] rounded-full bg-ink px-[30px] text-[15px] font-medium text-white transition hover:opacity-90"
           onClick={onForward}
         >
-          下一页
+          下一步
         </button>
       )}
     </div>

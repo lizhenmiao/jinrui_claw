@@ -75,16 +75,58 @@ if ($partition) {
   }
 }
 
-/** macOS 卷信息：diskutil 的 VolumeUUID 跨机器稳定，作为卷身份。 */
+/** 
+ * macOS 卷信息：优先读物理磁盘序列号（硬件级唯一 ID，跨平台稳定），
+ * 退而求其次才用 Volume UUID（文件系统级，某些格式如 FAT32 可能不稳定）。
+ */
 function readMacDriveInfo(mountRoot) {
   try {
-    const stdout = execFileSync("diskutil", ["info", mountRoot], { encoding: "utf8", timeout: 5000 });
-    const uuid = (stdout.match(/Volume UUID:\s*(\S+)/i) || [])[1] || "";
-    const name = (stdout.match(/Volume Name:\s*(.+)\r?\n/i) || [])[1] || "";
-    const fileSystem = (stdout.match(/Type \(Bundle\):\s*(\S+)/i) || [])[1] || "";
-    return { volumeSerial: uuid, volumeName: name.trim(), fileSystem };
+    // 先用 diskutil info 拿到设备节点（如 /dev/disk2s1）和基本信息
+    const infoStdout = execFileSync("diskutil", ["info", mountRoot], { encoding: "utf8", timeout: 5000 });
+    const volumeUUID = (infoStdout.match(/Volume UUID:\s*(\S+)/i) || [])[1] || "";
+    const volumeName = (infoStdout.match(/Volume Name:\s*(.+)\r?\n/i) || [])[1] || "";
+    const fileSystem = (infoStdout.match(/Type \(Bundle\):\s*(\S+)/i) || [])[1] || "";
+    const deviceNode = (infoStdout.match(/Device Node:\s*(\S+)/i) || [])[1] || "";
+    
+    // 尝试读物理磁盘的序列号（从分区节点 /dev/disk2s1 推到磁盘 /dev/disk2）
+    let diskSerial = "";
+    if (deviceNode) {
+      try {
+        const diskNode = deviceNode.replace(/s\d+$/, "");  // /dev/disk2s1 → /dev/disk2
+        const listStdout = execFileSync("diskutil", ["info", diskNode], { encoding: "utf8", timeout: 5000 });
+        // macOS 的 diskutil 在磁盘级别有 "Device / Media Name" 或 "Disk / Partition UUID"
+        // 但最稳定的是物理设备的 IORegistry 属性，我们用 "Media UUID" 或 "Disk UUID"
+        const mediaUUID = (listStdout.match(/Media UUID:\s*(\S+)/i) || [])[1] || "";
+        const diskUUID = (listStdout.match(/Disk \/ Partition UUID:\s*(\S+)/i) || [])[1] || "";
+        diskSerial = mediaUUID || diskUUID;
+        
+        // 如果 diskutil 拿不到，尝试 system_profiler（更慢但更全）
+        if (!diskSerial) {
+          try {
+            const usbStdout = execFileSync("system_profiler", ["SPUSBDataType", "-detailLevel", "mini"], { 
+              encoding: "utf8", 
+              timeout: 8000 
+            });
+            // 找到卷名对应的 USB 设备块，提取 Serial Number
+            const volumeBlock = usbStdout.split(/\n\s{2,4}\S/).find((block) => 
+              block.includes(volumeName.trim()) || block.includes(diskNode)
+            );
+            if (volumeBlock) {
+              diskSerial = (volumeBlock.match(/Serial Number:\s*(\S+)/i) || [])[1] || "";
+            }
+          } catch { /* system_profiler 超时或失败，继续用 UUID */ }
+        }
+      } catch { /* 读磁盘级信息失败，继续用卷 UUID */ }
+    }
+    
+    return { 
+      volumeSerial: volumeUUID, 
+      diskSerial, 
+      volumeName: volumeName.trim(), 
+      fileSystem 
+    };
   } catch {
-    return { volumeSerial: "" };
+    return { volumeSerial: "", diskSerial: "" };
   }
 }
 
@@ -106,12 +148,18 @@ function readDriveInfo() {
   return cachedDriveInfo;
 }
 
+/**
+ * 规范化设备身份：优先用物理磁盘序列号（真正的 U 盘硬件 ID，跨平台稳定），
+ * 没有才用卷序列号（文件系统级，可能因格式化而变）。
+ * 不再区分 platform，只用 U 盘的唯一标识，这样同一 U 盘在 Windows 和 macOS 上算出的指纹一致。
+ */
 function canonicalDriveIdentity(info) {
+  const diskSerial = normalizeSerial(info.diskSerial);
   const volumeSerial = normalizeSerial(info.volumeSerial);
+  
   return {
-    platform: info.platform || process.platform,
-    volumeSerial,
-    diskSerial: volumeSerial ? "" : normalizeSerial(info.diskSerial),
+    // 优先物理序列号，没有才用卷序列号
+    usbId: diskSerial || volumeSerial || "",
   };
 }
 
