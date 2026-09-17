@@ -1,22 +1,24 @@
 /**
- * 路径解析：产品根目录固定为可执行文件所在目录（U 盘根目录）。
- * 用户数据全部写在产品根目录的 data/ 下，随 U 盘插拔整体迁移；
+ * 路径解析：产品根目录固定为可执行文件所在目录，运行期数据根目录另行解析为实际存储卷根。
+ * 用户数据全部写在 U 盘根目录的 zgy-data/ 下，随 U 盘插拔整体迁移；
  * openclaw 模块缓存解压到本机磁盘，U 盘只保留一份压缩包。
  */
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execFileSync } = require("child_process");
 const { app } = require("electron");
+const timing = require("../shared/timing.json");
 
 let cached = null;
 
 /**
- * 产品根目录：运行期文件都写在这里的 data/ 下，随 U 盘插拔迁移。
+ * 产品根目录：资源与可执行文件所在目录，运行期数据目录不直接依赖这一层级。
  * - 便携自解压运行时由 PORTABLE_EXECUTABLE_DIR 指定；
  * - Windows 目录分发：可执行文件所在目录（zgyclaw 文件夹）；
  * - macOS：可执行文件在 App.app/Contents/MacOS/ 里，根目录要取 App 所在的那一层，
- *   这样 data/ 与 App 并列（对应 Windows 的 zgyclaw/data/），而不是被写进 App 包内部。
+ *   这样可以从 App 路径继续解析所在 U 盘卷，而不是把运行期文件写进 App 包内部。
  */
 function resolveProductRoot() {
   const portableDir = String(process.env.PORTABLE_EXECUTABLE_DIR || "").trim();
@@ -25,6 +27,82 @@ function resolveProductRoot() {
   const exeDir = path.dirname(app.getPath("exe"));
   if (process.platform === "darwin") return path.resolve(exeDir, "..", "..", "..");
   return exeDir;
+}
+
+/** 判断 Windows 程序所在盘符是否为可移动或 USB 磁盘，避免本地测试时把数据写到 C:\\zgy-data。 */
+function isRemovableWindowsDrive(root) {
+  const drive = String(root || "").replace(/[\\/]+$/, "");
+  if (!drive) return false;
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$drive = '${drive.replace(/'/g, "''")}'
+$logical = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$drive'"
+$partition = $null
+$disk = $null
+if ($logical) {
+  $partition = Get-CimAssociatedInstance -InputObject $logical -Association Win32_LogicalDiskToPartition | Select-Object -First 1
+}
+if ($partition) {
+  $disk = Get-CimAssociatedInstance -InputObject $partition -Association Win32_DiskDriveToDiskPartition | Select-Object -First 1
+}
+if ($logical -and $logical.DriveType -eq 2) { 'USB' }
+elseif ($disk -and ($disk.InterfaceType -eq 'USB' -or $disk.PNPDeviceID -like 'USB*')) { 'USB' }
+`;
+  try {
+    const output = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      encoding: "utf8",
+      timeout: timing.paths.windowsDriveTypeTimeoutMs,
+      windowsHide: true,
+    });
+    return output.trim() === "USB";
+  } catch {
+    return false;
+  }
+}
+
+/** 解析 macOS 程序所在的实际卷根目录，支持 App 位于卷内任意子目录。 */
+function resolveMacVolumeRoot(productRoot) {
+  const resolved = path.resolve(productRoot);
+  const volumePrefix = `${path.sep}Volumes${path.sep}`;
+  if (!resolved.startsWith(volumePrefix)) return resolved;
+  const volumeName = resolved.slice(volumePrefix.length).split(path.sep)[0];
+  return volumeName ? path.join(path.sep, "Volumes", volumeName) : resolved;
+}
+
+/** 解析运行期数据根目录：U 盘使用物理卷根，本地测试保留在发行目录旁边。 */
+function resolveDataRoot(productRoot) {
+  const resolved = path.resolve(productRoot);
+  if (!app.isPackaged) return resolved;
+  if (process.platform === "win32") {
+    const volumeRoot = path.parse(resolved).root;
+    return isRemovableWindowsDrive(volumeRoot) ? volumeRoot : path.resolve(resolved, "..");
+  }
+  if (process.platform === "darwin") return resolveMacVolumeRoot(resolved);
+  return resolved;
+}
+
+/** 找出旧发行目录中的运行期数据目录，供首次升级时迁移到 U 盘根目录。 */
+function legacyDataDirectories(productRoot, dataDir) {
+  const candidates = [
+    path.join(productRoot, "data"),
+    path.join(productRoot, "zgy-data"),
+    ...(process.platform === "win32" ? [path.resolve(productRoot, "..", "zgy-data")] : []),
+  ];
+  const target = path.normalize(dataDir);
+  return [...new Set(candidates.map((candidate) => path.normalize(candidate)))].filter((candidate) => candidate !== target);
+}
+
+/** 把旧数据目录原子移动到新的 U 盘根目录，失败时保留原目录等待人工处理。 */
+function migrateLegacyData(dataDir, candidates) {
+  if (fs.existsSync(dataDir)) return;
+  const source = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!source) return;
+  try {
+    fs.mkdirSync(path.dirname(dataDir), { recursive: true });
+    fs.renameSync(source, dataDir);
+  } catch {
+    // 迁移失败不删除旧目录，启动链会在新目录给出明确的写入或授权提示。
+  }
 }
 
 /** 模块缓存根目录：Windows 放本地应用数据，macOS 放用户应用支持目录。 */
@@ -51,14 +129,13 @@ function modulesCacheKey(archivePath) {
   return crypto.createHash("sha256").update(identity).digest("hex").slice(0, 16);
 }
 
+/** 组装产品、数据、资源、插件与授权文件的完整路径快照。 */
 function build() {
   const productRoot = resolveProductRoot();
-  
-  // 数据目录统一放在 U 盘根目录的 zgy-data，Windows 和 macOS 共享。
-  // macOS: productRoot 已经是 .app 的父目录（U 盘根目录）
-  // Windows: productRoot 是 zgyclaw/ 目录，父目录才是 U 盘根
-  const usbRoot = process.platform === "win32" ? path.resolve(productRoot, "..") : productRoot;
+  // 数据目录统一放在实际存储卷根目录的 zgy-data，Windows 和 macOS 共享。
+  const usbRoot = resolveDataRoot(productRoot);
   const dataDir = path.join(usbRoot, "zgy-data");
+  migrateLegacyData(dataDir, legacyDataDirectories(productRoot, dataDir));
   const stateDir = path.join(dataDir, ".openclaw");
   // 打包后资源目录用 Electron 给的 process.resourcesPath：
   // Windows 目录分发下它就是 <安装目录>/resources（与按可执行文件目录推导等价），
@@ -86,7 +163,7 @@ function build() {
     pluginsDir: path.join(resourcesDir, "plugins"),
     bridgeDir: path.join(resourcesDir, "bridge"),
     updateDir: path.join(dataDir, "update"),
-    // 授权文件与其它运行期文件统一放在 data 下；根目录旧文件在首次读取时自动迁移。
+    // 授权文件与其它运行期文件统一放在 zgy-data 下；旧目录在首次解析路径时自动迁移。
     licensePath: path.join(dataDir, "license.json"),
     legacyLicensePath: path.join(productRoot, "license.dat"),
     executablePath: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath("exe"),

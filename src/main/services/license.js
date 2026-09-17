@@ -12,7 +12,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { app } = require("electron");
 const { getPaths } = require("../paths");
-const { getFingerprint, mask } = require("./fingerprint");
+const { getFingerprint, mask, usbSerialUnavailableMessage } = require("./fingerprint");
 
 const LICENSE_VERSION = 1;
 // 授权签名密钥内置于客户端，用于离线校验授权文件完整性。
@@ -85,6 +85,7 @@ function bindUsb(options = {}) {
   const { productRoot } = getPaths();
   migrateLegacyLicense();
   const fp = getFingerprint();
+  if (!fp.available) throw new Error(usbSerialUnavailableMessage());
   const licenseKey = String(options.licenseKey || "").trim();
   if (licenseKey && !isValidLicenseKey(licenseKey)) {
     throw new Error(`授权码格式不正确：${licenseKey}（只允许字母、数字、点、下划线、短横线，4~64 位）`);
@@ -134,6 +135,9 @@ function verify() {
       return { ok: false, code: "BAD_LICENSE_SIGNATURE", filePath, message: "授权文件签名不正确，可能被修改。" };
     }
     const fp = getFingerprint();
+    if (!fp.available) {
+      return { ok: false, code: "USB_SERIAL_UNAVAILABLE", filePath, message: usbSerialUnavailableMessage() };
+    }
     if (license.payload.deviceFingerprint !== fp.fingerprint) {
       return {
         ok: false,
@@ -155,14 +159,15 @@ function readLicenseSummary() {
     try {
       if (!fileExists(file)) continue;
       if (file.endsWith(".json")) {
-        const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+        const raw = readLicense(file);
+        const summary = raw?.payload && typeof raw.payload === "object" ? raw.payload : raw;
         return {
           exists: true,
           file: path.basename(file),
-          serial: String(raw.serial || raw.usbSerial || raw.deviceSerial || ""),
-          edition: String(raw.edition || raw.plan || ""),
-          customer: String(raw.customer || raw.customerName || ""),
-          expiresAt: raw.expiresAt || null,
+          serial: String(summary?.deviceIdentity?.usbId || summary?.serial || summary?.usbSerial || summary?.deviceSerial || ""),
+          edition: String(summary?.edition || summary?.plan || ""),
+          customer: String(summary?.customer || summary?.customerName || ""),
+          expiresAt: summary?.expiresAt || null,
         };
       }
       return { exists: true, file: path.basename(file) };
@@ -182,7 +187,7 @@ function buildLicenseInfo() {
   const generatedAt = new Date().toISOString();
   const result = {
     productId: "ZgyClaw USB",
-    usb: { root: path.parse(productRoot).root, serial: info.identity.volumeSerial || "UNKNOWN", displaySerial: info.identity.volumeSerial || "UNKNOWN" },
+    usb: { root: info.root, serial: info.identity.usbId || "UNKNOWN", displaySerial: info.identity.usbId || "UNKNOWN" },
     license: { ...summary, licenseKey, status: summary.exists ? "已检测到授权文件" : "未检测到授权文件" },
     paths: { rootDir: productRoot, dataDir, configPath },
     generatedAt,

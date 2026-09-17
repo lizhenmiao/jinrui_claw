@@ -8,7 +8,7 @@ const path = require("path");
 const { app } = require("electron");
 const { getPaths } = require("../paths");
 const { getAppConfig, configLookupHint } = require("../app-config");
-const { getUsbId, getDriveInfo, getMachineId } = require("./fingerprint");
+const { getUsbId, getDriveInfo, getMachineId, usbSerialUnavailableMessage } = require("./fingerprint");
 const { bindUsb, boundLicenseKey } = require("./license");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
 const { readConfig, writeConfig } = require("./config-store");
@@ -101,9 +101,15 @@ async function postJson(url, body, timeoutMs = DEFAULT_TIMEOUT_MS) {
 /** 请求上下文：本机与 U 盘身份。override.licenseKey 供命令行"先核对再绑定"用。 */
 function clientContext(override = {}) {
   const settings = readBackendSettings();
+  const usbId = getUsbId();
+  if (!usbId) {
+    const error = new Error(usbSerialUnavailableMessage());
+    error.code = "USB_SERIAL_UNAVAILABLE";
+    throw error;
+  }
   return {
     licenseKey: String(override.licenseKey || settings.licenseKey).trim(),
-    usbId: getUsbId(),
+    usbId,
     machineId: getMachineId(),
     hostname: os.hostname(),
     os: `${os.type()} ${os.release()}`,
