@@ -125,21 +125,21 @@ async function runCliCommand() {
 }
 
 /**
- * 需要用户输入授权码时的统一出口：先把微信组件预热在后台拉起来，再抛出带码的错误。
- * 用户在加载页填授权码的这段时间里，预热子进程正好在跑（它只依赖已解压的模块目录，
- * 不需要授权文件）——填完重跑启动链时往往已经热好，省掉一次加载页；没热好就继续在加载页等。
+ * 需要用户输入授权码时的统一出口：先把运行组件的准备工作在后台拉起来，再抛出带码的错误。
+ * 用户在加载页填授权码的这段时间里，解压与微信预热正好在跑（它们都不依赖授权文件），
+ * 填完重跑启动链时往往已经备好，省掉后面的等待。
  */
 function failLicenseRequired(message) {
-  try { processManager.prewarmWechatLogin({ warmup: true }); } catch { /* 预热失败不影响授权提示 */ }
+  try { processManager.startWechatWarmup(); } catch { /* 预热失败不影响授权提示 */ }
   const error = new Error(message);
   error.code = "LICENSE_REQUIRED";
   return error;
 }
 
 /**
- * 启动核心：模块引导 → 授权校验 → 后台校验/模型同步 → 微信组件预热 → 残留进程清理。
- * 幂等可重试（模块已解压/授权已通过时秒回），失败抛错由状态机转成错误页。
- * onStage 把当前阶段推给加载页：解压与首次预热合起来要一两分钟，逐步说明在做什么，用户才不是白等。
+ * 启动核心：授权校验 → 后台校验/模型同步 → 残留进程清理，解压与微信预热在后台并行。
+ * 幂等可重试（授权已通过时秒回），失败抛错由状态机转成错误页。
+ * onStage 把当前阶段推给加载页；这里只剩几秒的联网校验，长耗时的准备工作都不在这条链上。
  */
 async function bootCore(onStage) {
   const { dataDir, logsDir } = getPaths();
@@ -152,10 +152,13 @@ async function bootCore(onStage) {
   }
   fs.mkdirSync(logsDir, { recursive: true });
 
-  // 必须 await：子进程启动要用解压后的模块目录，不等就会拿着未就绪的缓存往下走。
-  if (!modules.isModulesReady()) onStage("正在解压运行组件，首次运行需要一分钟左右…");
-  await modules.ensureModules();
-  logLine("modules ready");
+  // 运行组件解压放后台：需要落盘的文件数以万计，还要被杀软逐个扫过，
+  // 而启动链本身（授权校验、后台联检）根本用不到它。真正要用的地方（网关启动、微信/QQ 扫码）各自等同一次解压。
+  if (!modules.isModulesReady()) {
+    modules.ensureModules()
+      .then(() => logLine("modules ready"))
+      .catch((error) => logLine(`modules extract failed: ${error.message}`));
+  }
 
   onStage("正在校验授权…");
   if (license.shouldRequireLicense()) {
@@ -186,13 +189,10 @@ async function bootCore(onStage) {
   }
   logLine("backend check done");
 
-  // 微信组件预热放在最后：前面每一步都可能在几秒内失败，先让用户看到真正的原因，
-  // 而不是白等一分多钟再被告知授权不对。已热过或已绑定微信号时这里立即返回。
-  const warmup = await processManager.warmupWechatRuntime((message) => onStage(message));
-  logLine(warmup.warmed ? `wechat runtime warmed (ready=${warmup.ready})` : "wechat runtime already warm");
-
   await processManager.cleanupStaleProcesses();
   logLine("stale cleanup done");
+  // 微信组件预热同样在后台：用户登录账号、选模型的这一两分钟正好用来备码，走到 BOT 页时多半已经有码。
+  if (processManager.startWechatWarmup()) logLine("wechat warmup scheduled");
   // 配置归一化回写一次：模型展示名的品牌前缀等约定在写入路径上补齐，升级前写好的旧配置靠这一步在首次启动就生效。
   try { writeConfig(readConfig()); } catch { /* 归一化失败不阻塞启动 */ }
 }
@@ -339,7 +339,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     if (await runCliCommand()) return;
     registerIpcHandlers();
-    // 窗口先行：加载页立刻可见（首次模块解压约 1 分钟不再是黑等），启动核心在后台进行，失败在窗口错误页展示并支持重试。
+    // 窗口先行：加载页立刻可见（模块解压在后台不再是黑等），启动核心在后台进行，失败在窗口错误页展示并支持重试。
     createMainWindow();
     void runBoot();
   });

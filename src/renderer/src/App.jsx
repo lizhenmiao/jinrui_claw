@@ -28,8 +28,8 @@ export default function App() {
       const publicConfig = await desktopApi.app.getPublicConfig().catch(() => null);
       setToastPosition(publicConfig?.ui?.toastPosition);
       setConfigured(await desktopApi.config.isConfigured());
-      // 微信组件预热已在启动链里完成（加载页逐步说明在做什么），进向导后 BOT 页直接有码，
-      // 不会出现"启动等一次、进 BOT 页再等一次"的两段等待。
+      // 运行组件的解压与微信预热都在后台进行，不挡这一步：向导前几页（登录、订阅、选模型）用不到它们，
+      // 等用户走到 BOT 页时多半已经备好，没备好也由面板自己显示进度。
       setPhase("ready");
     } catch (error) {
       setBootFailure(error.message);

@@ -8,7 +8,7 @@ const { getAppConfig, getPublicConfig } = require("./app-config");
 const { readConfig, writeConfig, writeSubscriptionProvider, isConfigured, resetAll } = require("./services/config-store");
 const license = require("./services/license");
 const gateway = require("./services/process-manager");
-const { findQQBotConnectorEntry, findQQBotPluginPaths, isRuntimeWarm } = require("./services/modules");
+const { ensureModules, findQQBotConnectorEntry, findQQBotPluginPaths, isRuntimeWarm, modulesStatus } = require("./services/modules");
 const { buildRepairChecks, runPortableRepair } = require("./services/repair");
 const { readRecentLogs, appendWechatLoginLog } = require("./services/logs");
 const { bindUsbWithLicense } = require("./services/backend-client");
@@ -29,9 +29,11 @@ function escapeHtml(value) {
 /**
  * 本地二维码 SVG 生成（复用 openclaw 模块内的 qrcode 包）。
  * 必须用 require：qrcode 本身是 CommonJS，而安装包内的主进程是 V8 字节码，字节码里 import() 没有 host 回调（报 "A dynamic import callback was not specified."），表现就是扫码面板一直停在"生成中..."。
+ * 解压是后台进行的，先等它就绪再 require，否则首次进面板时这个包还不在盘上。
  */
 async function renderQrSvg(data) {
   if (!data || data.length > 8192) throw new Error("二维码内容无效或过长");
+  await ensureModules();
   const qrcodeEntry = path.join(getPaths().modulesCacheDir, "openclaw", "node_modules", "qrcode", "lib", "index.js");
   const qrcode = require(qrcodeEntry);
   return qrcode.toString(data, { type: "svg", margin: 1, errorCorrectionLevel: "M", width: 138 });
@@ -223,10 +225,14 @@ async function renderQrSvg(data) {
     const snapshot = gateway.getWechatLoginSnapshot();
     return { ok: false, type: "text", qr: "", message: snapshot.message };
   });
-  // 状态里附带本机组件预热标记：面板据此在首次冷启动（约 1 分钟）时改盖加载页，而不是干等二维码。
-  ipcMain.handle("channel:wechat:status", () => ({ ...gateway.getWechatLoginSnapshot(), runtimeWarm: isRuntimeWarm() }));
+  // 状态里附带运行组件的准备情况：解压与首次冷启动都在后台进行，面板据此显示"正在准备组件"而不是干等二维码。
+  ipcMain.handle("channel:wechat:status", () => ({
+    ...gateway.getWechatLoginSnapshot(),
+    runtimeWarm: isRuntimeWarm(),
+    modules: modulesStatus(),
+  }));
   // 面板打开时预热登录会话：让"重新绑定"能立刻拿到二维码（已绑定时也能预热）。
-  ipcMain.handle("channel:wechat:prewarm", () => ({ ok: true, prewarmed: gateway.prewarmWechatLogin({ force: true }) }));
+  ipcMain.handle("channel:wechat:prewarm", async () => ({ ok: true, prewarmed: await gateway.prewarmWechatLogin({ force: true }) }));
   // 各通道连接状态摘要：向导据此判断"已接入至少一个平台"，可以进入下一步。
   ipcMain.handle("channel:summary", () => channels.channelSummary());
 

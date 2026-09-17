@@ -2,14 +2,24 @@
  * 运行时模块引导：把 openclaw 模块压缩包解压到本机缓存（仅首次），后续启动直接命中缓存，U 盘只保留压缩包。
  */
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { getPaths } = require("../paths");
 
 /** 解压临时目录名前缀（后缀是进程号+时间戳），残留清理按它识别。 */
 const STAGING_PREFIX = "_extracting-";
+/**
+ * 解压时直接跳过的文件：调试符号（*.map）与类型声明（*.d.ts）只给编辑器和类型检查用，运行时一行都不读；
+ * linux 预编译件在 Windows/macOS 客户端上也永远用不到。
+ * 少写一万两千个文件（约 114MB），实测解压从 36 秒降到 26 秒，杀软要逐个扫描的文件同样少三成——
+ * 首次启动的等待大头就在这里。
+ */
+const EXTRACT_EXCLUDES = ["--exclude=*.map", "--exclude=*.d.ts", "--exclude=*/prebuilds/linux-*"];
 /** 正在进行的模块解压，用于并发单飞。 */
 let extracting = null;
+/** 最近一次解压失败的原因：解压挪到后台后，界面靠它说明"为什么还没准备好"。 */
+let lastExtractError = "";
 
 function log(message) {
   try {
@@ -30,7 +40,8 @@ function isReady() {
 
 /**
  * 本机是否已经把 openclaw 组件跑起来过一次。
- * 刚解压出来的模块树第一次执行要付冷启动代价（实测约 1 分钟：Windows 首次读取扫描 + 冷文件缓存），标记与模块缓存同目录，模块重新解压时随 node_modules 一起消失，冷启动代价随之重来。
+ * 组件出码本身只要五六秒，但刚解压出来的那一棵树第一次被读到时要额外付一次代价（系统文件缓存是冷的、杀软逐个扫描新文件），实测会拉到几十秒；
+ * 标记与模块缓存同目录，模块重新解压时随 node_modules 一起消失，这份代价也随之重来。
  */
 function isRuntimeWarm() {
   return fs.existsSync(path.join(getPaths().modulesCacheDir, ".zgy-warm"));
@@ -81,7 +92,7 @@ function extractArchive(archive, cacheParent) {
     const tarExecutable = process.platform === "win32"
       ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
       : "tar";
-    const child = spawn(tarExecutable, ["-xzf", archive, "-C", staging], { windowsHide: true });
+    const child = spawn(tarExecutable, ["-xzf", archive, "-C", staging, ...EXTRACT_EXCLUDES], { windowsHide: true });
     let stderrText = "";
     child.stderr.on("data", (chunk) => { stderrText += String(chunk); });
     child.on("error", reject);
@@ -116,20 +127,40 @@ function extractArchive(archive, cacheParent) {
 /**
  * 确保模块缓存就绪并返回模块根目录；压缩包缺失时抛错。
  * 解压单飞：启动链与子进程启动可能同时要求就绪，两次 tar 解到同一个缓存目录会互删中间产物（实测报 ENOTEMPTY），并发调用一律等同一次解压。
+ * 解压在后台进行、不挡启动，所以每个真正需要模块的入口（网关启动、微信/QQ 扫码）都 await 这个函数：
+ * 已就绪时立即返回，正在解压时排在同一个 Promise 后面，不会重复解压也不会拿着半棵树去起子进程。
  */
 async function ensureModules() {
   const { payloadArchive, modulesCacheDir } = getPaths();
   if (isReady()) return modulesCacheDir;
   if (!fs.existsSync(payloadArchive)) {
-    throw new Error(`缺少模块压缩包: ${payloadArchive}`);
+    lastExtractError = `缺少模块压缩包: ${payloadArchive}`;
+    throw new Error(lastExtractError);
   }
   if (!extracting) {
     extracting = extractArchive(payloadArchive, path.dirname(modulesCacheDir))
       .finally(() => { extracting = null; });
   }
-  await extracting;
-  if (!fs.existsSync(moduleEntryPath())) throw new Error("解压后未找到 openclaw.mjs");
+  try {
+    await extracting;
+  } catch (error) {
+    lastExtractError = error.message;
+    throw error;
+  }
+  if (!fs.existsSync(moduleEntryPath())) {
+    lastExtractError = "解压后未找到 openclaw.mjs";
+    throw new Error(lastExtractError);
+  }
+  lastExtractError = "";
   return modulesCacheDir;
+}
+
+/**
+ * 运行组件的准备状态：解压挪到后台后，界面（微信/QQ 面板、网关启动）靠它说明当前是"已就绪""正在准备"还是"准备失败"。
+ */
+function modulesStatus() {
+  if (isReady()) return { ready: true, preparing: false, error: "" };
+  return { ready: false, preparing: Boolean(extracting), error: lastExtractError };
 }
 
 /**
@@ -204,7 +235,9 @@ async function ensurePayload(name) {
     return "";
   }
 
-  const tmpDir = path.join(paths.payloadDir, `_payload-${name}-${process.pid}`);
+  // 临时解压目录放系统临时目录，不放安装包内：mac 上往 .app 里写东西会改变包体内容（签名按目录内容校验），
+  // 程序被放在只读介质上时更是直接失败。
+  const tmpDir = path.join(os.tmpdir(), `zgyclaw-payload-${name}-${process.pid}`);
   await fs.promises.rm(tmpDir, { recursive: true, force: true });
   await fs.promises.mkdir(tmpDir, { recursive: true });
   try {
@@ -261,5 +294,6 @@ module.exports = {
   isRuntimeWarm,
   markRuntimeWarm,
   moduleEntryPath,
+  modulesStatus,
   requireModulesDir,
 };

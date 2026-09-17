@@ -8,7 +8,7 @@ const { getPaths } = require("../paths");
 const { readConfig, writeConfig, ensurePluginLoadPath } = require("./config-store");
 const { readJsonFile } = require("./config-utils");
 const { decryptConfigSecrets, encryptConfigSecrets, writeJsonAtomic } = require("./secret-crypto");
-const { bundledPluginPath, ensurePayload, findQQBotPluginPaths } = require("./modules");
+const { bundledPluginPath, ensureModules, ensurePayload, findQQBotPluginPaths } = require("./modules");
 
 function fileExists(file) {
   try { return fs.existsSync(file); } catch { return false; }
@@ -66,6 +66,7 @@ function removeExistingEntry(target) {
  * 链接每次重建：旧链接可能指向别的机器/已被删掉的缓存，留着就是坏的。
  */
 async function installWecomPlugin() {
+  await ensureModules();
   const target = await ensurePayload("wecom");
   if (!target) throw new Error("企业微信插件安装包缺失，请重新获取客户端更新包。");
   const linkPath = path.join(target, "node_modules", "openclaw");
@@ -337,14 +338,15 @@ function writeDingTalkChannelConfig(input) {
 // ---- 微信通道激活与整体通道预载 ----
 
 /**
- * 通道插件目录：优先随包分发的 resources/plugins/<name>（自包含），没有再用模块包解压出来的同名副本（如飞书：只随模块包分发）。
+ * 通道插件目录：优先用模块缓存里的那份——它在本机磁盘上（不走 U 盘的慢速随机读），
+ * 而且就躺在 node_modules 里，插件对 openclaw 的 import 能按常规方式解析到。
+ * 缓存里没有的（如钉钉对话：只随安装包分发）再退回 resources/plugins/<name>。
  * 只登记一条，避免同一插件被两个路径重复加载。
  */
 function channelPluginPath(bundledName, cacheSegments) {
-  const bundled = bundledPluginPath(bundledName);
-  if (fileExists(bundled)) return bundled;
   const cached = path.join(getPaths().modulesCacheDir, ...cacheSegments);
-  return fileExists(cached) ? cached : bundled;
+  if (fileExists(cached)) return cached;
+  return bundledPluginPath(bundledName);
 }
 
 /**
@@ -433,9 +435,13 @@ async function activatePortableChannel(channel) {
   return changed;
 }
 
-/** 启动向导保存时的通道预载：微信优先，其余通道按已配置状态激活。 */
+/**
+ * 启动向导保存时的通道预载：微信优先，其余通道按已配置状态激活。
+ * 先等运行组件就绪：插件加载路径要指向模块缓存里的副本，解压没完就只能退回 U 盘那份。
+ */
 async function preloadChannelsForStart() {
   const changed = [];
+  await ensureModules();
   try { if (await activatePortableChannel("openclaw-weixin")) changed.push("openclaw-weixin"); } catch { /* 通道激活失败不阻塞启动 */ }
   for (const channel of ["wecom", "feishu", "openclaw-dingtalk-channel"]) {
     try { if (await activatePortableChannel(channel)) changed.push(channel); } catch { /* 单个通道失败不影响其余 */ }

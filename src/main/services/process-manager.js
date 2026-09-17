@@ -12,7 +12,7 @@ const { getAppConfig } = require("../app-config");
 const timing = require("../../shared/timing.json");
 const { prepareRuntimeConfig } = require("./secret-crypto");
 const { readConfig, writeConfig, ensurePluginLoadPath } = require("./config-store");
-const { requireModulesDir, isRuntimeWarm, markRuntimeWarm, moduleEntryPath } = require("./modules");
+const { requireModulesDir, ensureModules, isRuntimeWarm, markRuntimeWarm, moduleEntryPath } = require("./modules");
 const { syncBackendModels, reportEvent } = require("./backend-client");
 const { appendLogLine, appendRawLog } = require("./logs");
 const { createQrSession } = require("./qr-session");
@@ -20,6 +20,8 @@ const { createQrSession } = require("./qr-session");
 let gatewayProcess = null;
 let dingTalkBridgeProcess = null;
 let wardenProcess = null;
+/** 本进程亲手拉起的子进程 PID：残留清理只该杀上一次运行留下的进程，不能把刚拉起的预热/网关进程一起打掉。 */
+const ownChildPids = new Set();
 
 // 微信登录会话：登录子进程由本模块独占，其 stdout 输出同时驱动二维码与状态机，因此预热、刷新、UI 轮询三条路径共享同一份状态，不会出现"已扫码却仍提示待扫码"。
 // 状态与过期自动重建策略由 qr-session 统一维护，这里只管子进程与输出解析。
@@ -29,6 +31,11 @@ let wechatRebinding = false;
 /** 重新绑定前已绑定的账号：新号绑成功后据此清理旧号，避免两个微信号同时在线。 */
 let wechatRebindBaseline = [];
 let wechatLoginOutput = "";
+/**
+ * 最近一次登录尝试的失败原因：子进程一次码都没出就退出时记下（含退出码与最后一行输出）。
+ * 面板拿它显示真实原因，而不是让用户对着"正在生成二维码"干等——组件在某台机器上起不来时，这行字就是唯一线索。
+ */
+let wechatLoginFailure = "";
 const wechatSession = createQrSession({
   messages: { waiting: "请用微信扫码", ended: "登录进程已退出，正在重新生成二维码..." },
   start: (options) => spawnWechatLoginChild(options),
@@ -92,8 +99,10 @@ function ensureWarden() {
 function registerChild(child) {
   if (!child?.pid) return child;
   ensureWarden();
+  ownChildPids.add(child.pid);
   writeChildPids([...readChildPids(), child.pid]);
   child.on("exit", () => {
+    ownChildPids.delete(child.pid);
     writeChildPids(readChildPids().filter((pid) => pid !== child.pid));
   });
   return child;
@@ -189,16 +198,18 @@ function stopProcessTree(pid) {
   } catch { /* 进程可能已退出 */ }
 }
 
-/** 清理上次异常退出残留的子进程（按模块缓存路径匹配，不会误伤其它 U 盘）。 */
+/**
+ * 清理上次异常退出残留的子进程（按模块缓存路径匹配，不会误伤其它 U 盘）。
+ * 只清"上一次运行留下的"：本进程刚拉起的预热/网关子进程命令行里同样带模块缓存路径，
+ * 一并杀掉会把刚热好的微信登录进程连同它手上的二维码打掉，界面就只能重新等一轮。
+ */
 async function cleanupStaleProcesses() {
   const { modulesCacheDir } = getPaths();
-  const pids = await listMatchingProcesses(modulesCacheDir);
-  for (const pid of pids) {
-    if (pid === process.pid) continue;
-    stopProcessTree(pid);
-  }
-  if (pids.length) appendLogLine("stale-cleanup.log", `killed=[${pids.join(",")}]`);
-  return pids;
+  const matched = await listMatchingProcesses(modulesCacheDir);
+  const stale = matched.filter((pid) => pid !== process.pid && !ownChildPids.has(pid));
+  for (const pid of stale) stopProcessTree(pid);
+  if (stale.length) appendLogLine("stale-cleanup.log", `killed=[${stale.join(",")}]`);
+  return stale;
 }
 
 /** 网关是否在监听端口。 */
@@ -218,11 +229,13 @@ function ensureChatCompletionsEndpoint(config) {
   return false;
 }
 
-/** 启动网关：同步后台模型 → 启用 chatCompletions → 拉起进程并等待端口就绪。 */
+/** 启动网关：等运行组件就绪 → 同步后台模型 → 启用 chatCompletions → 拉起进程并等待端口就绪。 */
 async function startGateway() {
   if (gatewayProcess && !gatewayProcess.killed) {
     return { ok: true, message: "网关已在运行", alreadyRunning: true };
   }
+  // 模块解压是后台进行的，网关要用解压出来的那棵树：已就绪立即返回，还在解压就排队等它。
+  await ensureModules();
   // 即将按最新配置启动，此前累积的"待重启"标记全部落地。
   pendingRestartReasons.clear();
   try {
@@ -379,8 +392,21 @@ function getWechatLoginProcess() {
   return wechatLoginProcess;
 }
 
+/** 取子进程输出里最后一行有效文本（去掉终端控制序列与空行），截到 160 字，用于界面上的失败提示。 */
+function lastOutputLine(text) {
+  const lines = String(text || "")
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const line = lines[lines.length - 1] || "";
+  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+}
+
 /** 消费登录进程输出：提取最新二维码、推进状态并落日志（每个进程只接一次）。 */
 function consumeWechatLoginOutput(child) {
+  // 本次尝试是否出过码：没出过码就退出属于"组件没起来"，要把原因报给界面，而不是当成普通的二维码过期。
+  let sawQr = false;
   const consume = (chunk) => {
     const text = chunk.toString();
     wechatLoginOutput += text;
@@ -391,6 +417,8 @@ function consumeWechatLoginOutput(child) {
       appendLogLine("wechat-login.log", `qr ready in ${wechatSession.attemptElapsedMs()}ms`);
       // 能出码说明本机组件已经跑起来过，此后的启动不再有冷启动代价。
       markRuntimeWarm();
+      sawQr = true;
+      wechatLoginFailure = "";
     }
     wechatSession.reportQr(qr);
     appendRawLog("wechat-login.log", text);
@@ -399,10 +427,20 @@ function consumeWechatLoginOutput(child) {
   if (child.stderr) child.stderr.on("data", consume);
   child.on("error", (error) => {
     appendRawLog("wechat-login.log", `login process error: ${error.message}`);
-    wechatSession.reportStatus("failed", `微信登录进程启动失败：${error.message}`);
+    wechatLoginFailure = `微信登录进程启动失败：${error.message}`;
+    wechatSession.reportStatus("failed", wechatLoginFailure);
   });
   // 进程结束但未绑定成功（超时、被清杀）：会话回到待重建，由状态查询按冷却重建。
-  child.on("exit", () => wechatSession.attemptEnded());
+  child.on("exit", (code, signal) => {
+    const exitInfo = `code=${code == null ? "-" : code} signal=${signal || "-"}`;
+    appendLogLine("wechat-login.log", `login process exited ${exitInfo}`);
+    if (sawQr || child.stoppedByApp) {
+      wechatSession.attemptEnded();
+      return;
+    }
+    wechatLoginFailure = `微信组件没能启动（${exitInfo}）：${lastOutputLine(wechatLoginOutput) || "子进程没有任何输出"}`;
+    wechatSession.attemptEnded(wechatLoginFailure);
+  });
 }
 
 /** 拉起一次登录尝试（会话的 start 钩子）：注册插件路径 → 起子进程 → 接输出。
@@ -441,6 +479,8 @@ function startWechatLoginChild(options = {}) {
 function killWechatLoginProcess() {
   const child = getWechatLoginProcess();
   if (child) {
+    // 标记成"我们主动停的"：它的退出不是故障，别把诊断信息写成"组件没能启动"。
+    child.stoppedByApp = true;
     try { stopProcessTree(child.pid); } catch { /* 进程可能已退出 */ }
   }
   wechatLoginProcess = null;
@@ -487,28 +527,32 @@ function isWeixinBound() {
 }
 
 /**
- * 微信登录会话快照（UI 轮询入口）：{ running, status, qr, message }。
+ * 微信登录会话快照（UI 轮询入口）：{ running, status, qr, message, failureHint }。
  * 登录进程已退出且二维码不可用时按冷却时间后台重建，前端下一次轮询即可拿到新码；
  * 连续自动重建超过上限后不再自动拉起，改为提示用户点击"刷新二维码"（人工点击会重置计数）。
+ * failureHint 是"子进程没出码就退出"的真实原因，会一直带到下次出码为止——自动重建会把 message 重置成"正在生成"，
+ * 只看 message 的话用户永远看不到组件起不来的线索。
  */
 function getWechatLoginSnapshot() {
   // 已绑定且不在重新绑定过程中：一律报"已绑定"，界面不展示二维码。
   if (isWeixinBound() && !wechatRebinding) {
-    return { running: Boolean(getWechatLoginProcess()), status: "success", qr: "", message: "微信已绑定，通道已启用" };
+    return { running: Boolean(getWechatLoginProcess()), status: "success", qr: "", message: "微信已绑定，通道已启用", failureHint: "" };
   }
   if (!isWeixinChannelEnabled()) {
     const snapshot = wechatSession.snapshot();
-    return { ...snapshot, status: snapshot.qr ? snapshot.status : "idle", message: snapshot.qr ? snapshot.message : "微信通道未启用" };
+    return { ...snapshot, status: snapshot.qr ? snapshot.status : "idle", message: snapshot.qr ? snapshot.message : "微信通道未启用", failureHint: wechatLoginFailure };
   }
   // 过期后的自动重建（冷却 + 次数上限）在 snapshot() 里统一处理。
-  return wechatSession.snapshot();
+  return { ...wechatSession.snapshot(), failureHint: wechatLoginFailure };
 }
 
 /**
  * 等待可用二维码（无可用进程时按需拉起），超时返回空串。
  * options.restart=true 表示用户主动"重新绑定"，此时即使已绑定也允许换新码。
+ * 解压在后台进行，这里先等运行组件就绪再拉子进程：首次进 BOT 页时模块可能还在解压，
+ * 直接拉起只会拿到"组件尚未准备好"的错误。
  */
-function waitForWechatQr(options = {}) {
+async function waitForWechatQr(options = {}) {
   const timeoutMs = options.timeoutMs || timing.wechatScan.qrWaitTimeoutMs;
   if (options.restart) {
     // 用户主动重新绑定：先进入重绑态，否则下一次状态查询会立刻把界面判回"已绑定"。
@@ -524,7 +568,8 @@ function waitForWechatQr(options = {}) {
     wechatSession.halt();
   }
   // 已经绑定过就别再拉新进程生成二维码（除非用户明确要重新绑定）。
-  if (!options.restart && isWeixinBound()) return Promise.resolve("");
+  if (!options.restart && isWeixinBound()) return "";
+  await ensureModules();
   startWechatLoginChild(options.restart ? { restart: true } : {});
   return wechatSession.waitForQr(timeoutMs);
 }
@@ -532,12 +577,14 @@ function waitForWechatQr(options = {}) {
 /**
  * 预生成微信登录二维码，让二维码在用户到 BOT 页之前就备好。
  * 通道没启用时也拉起来（这是"预热"而不是"绑定"）；已绑定微信号则跳过，除非 force（用户点"重新绑定"要立刻出码）。
+ * 同样要先等模块解压完：预热是在后台跑的，不急这几十秒，但不能拿着半棵树去起进程。
  */
-function prewarmWechatLogin(options = {}) {
+async function prewarmWechatLogin(options = {}) {
   if (getWechatLoginProcess()) return false;
   if (!options.warmup && !isWeixinChannelEnabled()) return false;
   if (isWeixinBound() && !options.force) return false;
   try {
+    await ensureModules();
     startWechatLoginChild();
     return true;
   } catch {
@@ -546,19 +593,17 @@ function prewarmWechatLogin(options = {}) {
 }
 
 /**
- * 启动阶段等微信组件就绪（登录子进程出码即算就绪），把首次冷启动的等待收进启动加载页，
- * 这样用户进向导后到 BOT 页直接有码，不会出现"启动等一次、进 BOT 页再等一次"的两段等待。
- * 已热过（有 .zgy-warm 标记）或已绑定微信号时立即返回，不拉起进程、不加长启动。
- * onStage 把当前阶段文案推给加载页；超时上限取 timing.boot.warmupTimeoutMs。
+ * 启动阶段把微信组件的冷启动放到后台跑：不挡启动链，也不挡界面。
+ * 出码本身只要五六秒，慢的是刚解压出来的模块树第一次被读（系统缓存冷、杀软逐个扫新文件），
+ * 这段时间正好和用户登录账号、选模型重叠；用户真走到 BOT 页时码多半已经备好，没备好就在面板里显示进度。
+ * 已热过或已绑定微信号时什么都不做。
  */
-async function warmupWechatRuntime(onStage) {
-  if (isRuntimeWarm() || isWeixinBound()) return { ready: true, warmed: false };
-  onStage("正在加载微信组件（首次在本机运行需要一分钟左右）…");
-  prewarmWechatLogin({ warmup: true });
-  const qr = await waitForWechatQr({ timeoutMs: timing.boot.warmupTimeoutMs });
-  appendLogLine("electron-shell.log", qr ? "wechat runtime ready" : "wechat runtime warmup timed out");
-  // 超时不拦启动：出码失败的原因（网络、平台侧）会在面板上显示，用户可以在那里重试。
-  return { ready: Boolean(qr), warmed: true };
+function startWechatWarmup() {
+  if (isRuntimeWarm() || isWeixinBound()) return false;
+  void prewarmWechatLogin({ warmup: true }).then((started) => {
+    appendLogLine("electron-shell.log", started ? "wechat warmup started" : "wechat warmup skipped");
+  });
+  return true;
 }
 
 /** 登记插件加载路径到 openclaw.json（通道启用后调用）。 */
@@ -593,10 +638,10 @@ module.exports = {
   startDingTalkBridge,
   startGateway,
   startWechatLoginChild,
+  startWechatWarmup,
   stopDingTalkBridge,
   stopGateway,
   stopProcessTree,
   waitForPort,
   waitForWechatQr,
-  warmupWechatRuntime,
 };

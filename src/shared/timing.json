@@ -1,8 +1,5 @@
 {
   "note": "轮询间隔与超时的唯一来源：主进程与渲染层都从这里取值，业务文件里不再写死数值；改节奏只改这里。",
-  "boot": {
-    "warmupTimeoutMs": 120000
-  },
   "login": {
     "pollIntervalMs": 1500,
     "waitTimeoutMs": 120000

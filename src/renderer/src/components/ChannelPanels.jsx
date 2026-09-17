@@ -5,7 +5,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import desktopApi from "../api.js";
 import timing from "../../../shared/timing.json";
-import { LoadingScreen } from "./LoadingScreen.jsx";
 import { AsyncButton, QrBox } from "./ui.jsx";
 
 const QQ_OPENCLAW_URL = "https://q.qq.com/qqbot/openclaw/login.html";
@@ -19,7 +18,7 @@ function renderQr(data) {
 export function ChannelPanel({ toolId, toast, plain = false, docUrl = "" }) {
   switch (toolId) {
     case "wechat":
-      return <WechatPanel toast={toast} plain={plain} />;
+      return <WechatPanel plain={plain} />;
     case "qqbot":
       return <QQPanel toast={toast} plain={plain} />;
     case "wecom":
@@ -69,13 +68,27 @@ function BoundBox({ size }) {
   );
 }
 
+/**
+ * 首次准备运行组件时的说明文案：解压与组件冷启动都在后台跑，面板里如实说在做什么，
+ * 用户可以先去配其它通道，不必盯着这里等。
+ */
+function preparingText(status) {
+  const modules = status?.modules;
+  if (modules && !modules.ready) {
+    return modules.error ? `运行组件准备失败：${modules.error}` : "正在准备运行组件…";
+  }
+  if (status?.runtimeWarm === false) return "正在启动微信组件…";
+  return "";
+}
+
 /** 微信扫码面板：登录拿码 → 轮询状态直至成功（已扫码/已绑定都会在二维码下方提示）。 */
-export function WechatPanel({ toast, plain }) {
+export function WechatPanel({ plain }) {
   const [svg, setSvg] = useState("");
   const [message, setMessage] = useState("正在连接微信登录入口...");
   const [tone, setTone] = useState("idle");
   const [started, setStarted] = useState(false);
-  const [coldWait, setColdWait] = useState(false);
+  // 子进程一次码都没出就退出时的真实原因（退出码 + 最后一行输出），显示到下次出码为止。
+  const [failureHint, setFailureHint] = useState("");
   const pollRef = useRef(null);
   const qrUrlRef = useRef("");
   const autoStarted = useRef(false);
@@ -88,6 +101,37 @@ export function WechatPanel({ toast, plain }) {
     qrUrlRef.current = qrUrl;
     setSvg(await renderQr(qrUrl));
   }, []);
+
+  /** 把一次状态查询的结果铺到面板上：二维码、提示文案、失败原因。 */
+  const applyStatus = useCallback(async (status) => {
+    if (!status) return;
+    if (status.qr) await showQr(status.qr);
+    setFailureHint(status.failureHint || "");
+    // 组件还在准备时优先说准备进度：这时候显示"正在生成二维码"没有信息量，反而像卡住了。
+    const preparing = status.qr ? "" : preparingText(status);
+    if (preparing || status.message) setMessage(preparing || status.message);
+  }, [showQr]);
+
+  const startPolling = useCallback(() => {
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await desktopApi.channels.wechat.status();
+        await applyStatus(status);
+        if (status?.status === "success") {
+          clearInterval(pollRef.current);
+          qrUrlRef.current = "";
+          setSvg("");
+          setTone("ok");
+        } else if (status?.status === "failed") {
+          clearInterval(pollRef.current);
+          setTone("warn");
+        } else if (["scanned", "confirming"].includes(status?.status)) {
+          setTone("ok");
+        }
+      } catch { /* 轮询失败继续 */ }
+    }, timing.wechatScan.pollIntervalMs);
+  }, [applyStatus]);
 
   const startLogin = useCallback(async (restart = false) => {
     setStarted(true);
@@ -103,25 +147,20 @@ export function WechatPanel({ toast, plain }) {
         setMessage(current.message || "微信已绑定，通道已启用");
         return;
       }
-      // 本机第一次启动组件要等一分钟左右（模块首次执行要过系统扫描），盖加载页说明清楚，别让面板像卡死。
-      // 只有主进程明确报"未预热"才盖：字段缺失（旧主进程/接口异常）时按普通等待处理，不误报"首次"。
-      setColdWait(current?.runtimeWarm === false && !current?.qr);
+      await applyStatus(current);
+      // 先开轮询再等码：首次要等组件准备好，这期间面板得持续显示后台进度，而不是定格在一句话上。
+      startPolling();
       // 已有可用二维码时直接复用（登录接口内部会等待新码出现）。
       const result = await desktopApi.channels.wechat.login(restart ? { restart: true } : {});
       if (result?.qr) {
         await showQr(result.qr);
         setMessage("请用微信扫码");
-      } else {
-        setMessage(result?.message || "二维码仍在后台生成，请稍候...");
       }
-      startPolling();
     } catch (error) {
       setMessage(`生成失败：${error.message}`);
       setTone("warn");
-    } finally {
-      setColdWait(false);
     }
-  }, [showQr]);
+  }, [applyStatus, showQr, startPolling]);
 
   // 进入面板即自动连接（复用预热二维码），无需手动点击。
   useEffect(() => {
@@ -129,28 +168,6 @@ export function WechatPanel({ toast, plain }) {
     autoStarted.current = true;
     startLogin();
   }, [startLogin]);
-
-  const startPolling = useCallback(() => {
-    clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const status = await desktopApi.channels.wechat.status();
-        if (status?.qr) await showQr(status.qr);
-        if (status?.message) setMessage(status.message);
-        if (status?.status === "success") {
-          clearInterval(pollRef.current);
-          qrUrlRef.current = "";
-          setSvg("");
-          setTone("ok");
-        } else if (status?.status === "failed") {
-          clearInterval(pollRef.current);
-          setTone("warn");
-        } else if (["scanned", "confirming"].includes(status?.status)) {
-          setTone("ok");
-        }
-      } catch { /* 轮询失败继续 */ }
-    }, timing.wechatScan.pollIntervalMs);
-  }, [showQr]);
 
   const messageTone = tone === "ok" ? "text-okdeep" : tone === "warn" ? "text-warndeep" : "text-subtle";
 
@@ -163,6 +180,7 @@ export function WechatPanel({ toast, plain }) {
             <QrBox svg={svg} placeholder={started ? "二维码生成中..." : "请使用微信扫码绑定"} size={236} />
           )}
           <p className={`mt-[18px] min-h-[20px] text-center text-[14px] ${messageTone}`}>{message}</p>
+          {failureHint && <p className="mt-[6px] max-w-[520px] text-center text-[12px] leading-[1.6] text-warndeep">{failureHint}</p>}
           <AsyncButton
             className="mt-[16px] h-[46px] min-w-[176px] rounded-full bg-ink px-[28px] text-[15px] font-medium text-white hover:opacity-90"
             busyText="正在连接..."
@@ -171,7 +189,6 @@ export function WechatPanel({ toast, plain }) {
             {tone === "ok" ? "重新绑定" : started ? "刷新二维码" : "扫码连接"}
           </AsyncButton>
         </div>
-        {coldWait && <LoadingScreen overlay message="首次运行需要准备组件，请稍候…" />}
       </Panel>
   );
 }
@@ -262,7 +279,7 @@ export function QQPanel({ toast, plain }) {
       } catch { /* 状态读取失败按未安装处理 */ }
       if (!installed) {
         // 首次进入自动安装插件（后台解压，无需用户点击）；失败时保留手动重试按钮。
-        setBindMessage("正在准备 QQ 插件（首次需要解压安装，请稍候）...");
+        setBindMessage("正在准备 QQ 插件，请稍候...");
         try {
           installed = Boolean((await desktopApi.channels.qq.install())?.installed);
         } catch (error) {
@@ -643,7 +660,7 @@ function CredentialFields({ fields, form, setForm, statusText, statusTone, onSav
       </div>
       <div className="mt-[10px] flex items-center gap-3">
         {extraActions}
-        {/* 保存可能触发网关重启（运行中且已配置时，约十几秒），按钮置灰转圈到完成。 */}
+        {/* 保存可能触发网关重启（运行中且已配置时），按钮置灰转圈到完成。 */}
         <AsyncButton
           className="h-[46px] min-w-[160px] rounded-full bg-ink px-[28px] text-[15px] font-medium text-white hover:opacity-90"
           busyText="保存中..."
