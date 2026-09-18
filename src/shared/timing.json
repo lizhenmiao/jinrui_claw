@@ -41,7 +41,8 @@
     "macDiskutilTimeoutMs": 5000,
     "macSystemProfilerTimeoutMs": 8000,
     "windowsMachineGuidTimeoutMs": 4000,
-    "macMachineUuidTimeoutMs": 5000
+    "macMachineUuidTimeoutMs": 5000,
+    "macIoregTimeoutMs": 5000
   },
   "oauth": {
     "tokenRefreshAheadMs": 900000,

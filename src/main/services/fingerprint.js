@@ -64,31 +64,59 @@ function collectMacUsbDevices(value, devices = []) {
   return devices;
 }
 
-/** 从 macOS USB 设备列表中选择与当前挂载卷对应的硬件序列号。 */
+/** 从 macOS ioreg 文本中收集 USB 设备的硬件序列号。 */
+function collectMacIoregUsbDevices(output) {
+  return String(output || "")
+    .split(/\n(?=\s*(?:\|[ \t]*)?\+-o )/)
+    .map((block) => {
+      const name = (block.match(/^\s*(?:\|[ \t]*)?\+-o\s+(.+?)\s+<class/m) || [])[1] || "";
+      const product = (block.match(/\"(?:USB Product Name|kUSBProductString|Product Name)\"\s*=\s*\"([^\"]+)\"/i) || [])[1] || "";
+      const serial = (block.match(/\"(?:USB Serial Number|kUSBSerialNumberString|Serial Number)\"\s*=\s*\"([^\"]+)\"/i) || [])[1] || "";
+      return { serial, labels: [name, product] };
+    })
+    .filter((device) => device.serial || device.labels.some(Boolean));
+}
+
+/** 从候选 USB 设备中选择与当前挂载卷对应的硬件序列号。 */
+function selectMacUsbSerial(devices, mediaName, diskNode) {
+  const usableDevices = devices
+    .map((device) => ({ ...device, serial: usableSerial(device.serial) }))
+    .filter((device) => device.serial);
+  if (!usableDevices.length) return "";
+
+  const normalizedMediaName = normalizeLabel(mediaName);
+  const normalizedDiskNode = normalizeLabel(diskNode);
+  const ranked = usableDevices.map((device) => {
+    const labels = (device.labels || []).map(normalizeLabel).filter(Boolean);
+    let score = 0;
+    if (normalizedDiskNode && labels.some((label) => label === normalizedDiskNode || label.includes(normalizedDiskNode))) score = Math.max(score, 10);
+    if (normalizedMediaName && labels.some((label) => label === normalizedMediaName || label.includes(normalizedMediaName) || normalizedMediaName.includes(label))) score = Math.max(score, 6);
+    return { ...device, score };
+  });
+  const matched = ranked.filter((device) => device.score > 0).sort((left, right) => right.score - left.score);
+  if (matched.length) {
+    const highestScore = matched[0].score;
+    const highest = matched.filter((device) => device.score === highestScore);
+    return highest.length === 1 ? highest[0].serial : "";
+  }
+  return usableDevices.length === 1 ? usableDevices[0].serial : "";
+}
+
+/** 从 system_profiler 与 IORegistry 依次读取 macOS USB 硬件序列号。 */
 function readMacUsbSerial(mediaName, diskNode) {
   try {
-    const stdout = execFileSync("system_profiler", ["SPUSBDataType", "-json"], { encoding: "utf8", timeout: timing.fingerprint.macSystemProfilerTimeoutMs });
-    const devices = collectMacUsbDevices(JSON.parse(stdout || "{}"))
-      .map((device) => ({ ...device, serial: usableSerial(device.serial) }))
-      .filter((device) => device.serial);
-    if (!devices.length) return "";
-
-    const normalizedMediaName = normalizeLabel(mediaName);
-    const normalizedDiskNode = normalizeLabel(diskNode);
-    const ranked = devices.map((device) => {
-      const labels = device.labels.map(normalizeLabel).filter(Boolean);
-      let score = 0;
-      if (normalizedDiskNode && labels.some((label) => label === normalizedDiskNode || label.includes(normalizedDiskNode))) score = Math.max(score, 10);
-      if (normalizedMediaName && labels.some((label) => label === normalizedMediaName || label.includes(normalizedMediaName) || normalizedMediaName.includes(label))) score = Math.max(score, 6);
-      return { ...device, score };
-    });
-    const matched = ranked.filter((device) => device.score > 0).sort((left, right) => right.score - left.score);
-    if (matched.length) {
-      const highestScore = matched[0].score;
-      const highest = matched.filter((device) => device.score === highestScore);
-      return highest.length === 1 ? highest[0].serial : "";
+    for (const dataType of ["SPUSBHostDataType", "SPUSBDataType"]) {
+      try {
+        const stdout = execFileSync("system_profiler", [dataType, "-json"], { encoding: "utf8", timeout: timing.fingerprint.macSystemProfilerTimeoutMs });
+        const serial = selectMacUsbSerial(collectMacUsbDevices(JSON.parse(stdout || "{}")), mediaName, diskNode);
+        if (serial) return serial;
+      } catch {
+        // 当前数据类型不可用时继续尝试下一个来源。
+      }
     }
-    return devices.length === 1 ? devices[0].serial : "";
+
+    const ioregOutput = execFileSync("ioreg", ["-p", "IOUSB", "-l", "-w", "0"], { encoding: "utf8", timeout: timing.fingerprint.macIoregTimeoutMs });
+    return selectMacUsbSerial(collectMacIoregUsbDevices(ioregOutput), mediaName, diskNode);
   } catch {
     return "";
   }
@@ -164,11 +192,19 @@ function readMacDriveInfo(volumePath) {
     const infoStdout = execFileSync("diskutil", ["info", volumePath], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
     const volumeUUID = (infoStdout.match(/Volume UUID:\s*(\S+)/i) || [])[1] || "";
     const volumeName = (infoStdout.match(/Volume Name:\s*(.+)\r?\n/i) || [])[1] || "";
-    const mediaName = (infoStdout.match(/Device \/ Media Name:\s*(.+)\r?\n/i) || [])[1] || "";
+    let mediaName = (infoStdout.match(/Device \/ Media Name:\s*(.+)\r?\n/i) || [])[1] || "";
     const fileSystem = (infoStdout.match(/Type \(Bundle\):\s*(\S+)/i) || [])[1] || "";
     const deviceNode = (infoStdout.match(/Device Node:\s*(\S+)/i) || [])[1] || "";
 
     const diskNode = deviceNode.replace(/s\d+$/, "");
+    if (!mediaName && diskNode) {
+      try {
+        const diskInfoStdout = execFileSync("diskutil", ["info", `/dev/${diskNode}`], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
+        mediaName = (diskInfoStdout.match(/Device \/ Media Name:\s*(.+)\r?\n/i) || [])[1] || "";
+      } catch {
+        // 分区信息没有媒体名称时，仍继续使用 USB 设备序列号匹配。
+      }
+    }
     const diskSerial = readMacUsbSerial(mediaName, diskNode);
     return { 
       volumeSerial: volumeUUID, 
