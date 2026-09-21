@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const { getPaths } = require("../paths");
 const { getAppConfig } = require("../app-config");
 const timing = require("../../shared/timing.json");
+const { registerSecrets } = require("./diagnostics");
 const { encryptConfigSecrets, decryptConfigSecrets } = require("./secret-crypto");
 
 function trimTrailingSlash(value) {
@@ -83,17 +84,27 @@ function sessionPath() {
   return path.join(getPaths().stateDir, "oauth-session.json");
 }
 
+/** 读取当前授权环境的会话，来源不匹配时清除会话与订阅派生凭据。 */
 function readSession() {
   try {
     if (!fs.existsSync(sessionPath())) return null;
     const value = decryptConfigSecrets(JSON.parse(fs.readFileSync(sessionPath(), "utf8")));
-    return value && typeof value === "object" ? value : null;
+    registerSecrets(value);
+    if (!value || typeof value !== "object") return null;
+    const settings = oauthSettings();
+    // 未记录来源的旧会话也需重新授权，不能把未知环境的令牌发给当前平台。
+    if (value.issuer !== settings.issuer || value.clientId !== settings.clientId) {
+      dropSession();
+      return null;
+    }
+    return value;
   } catch {
     return null;
   }
 }
 
 function writeSession(session) {
+  registerSecrets(session);
   fs.mkdirSync(path.dirname(sessionPath()), { recursive: true });
   fs.writeFileSync(sessionPath(), `${JSON.stringify(encryptConfigSecrets(session), null, 2)}\n`, "utf8");
   try { fs.chmodSync(sessionPath(), 0o600); } catch { /* POSIX 权限 */ }
@@ -246,7 +257,10 @@ async function handleCallback(params = {}) {
   try {
     user = await fetchJson(endpoints(settings).userinfo, { headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" } });
   } catch { /* userinfo 失败不阻塞登录 */ }
-  writeSession({
+  // 当前授权会话同时用于落盘和通知订阅令牌同步。
+  const session = {
+    issuer: settings.issuer,
+    clientId: settings.clientId,
     accessToken: token.access_token,
     refreshToken: token.refresh_token || "",
     idToken: token.id_token || "",
@@ -254,7 +268,9 @@ async function handleCallback(params = {}) {
     scope: token.scope || settings.scopes,
     user: publicUser(user),
     loggedInAt: new Date().toISOString(),
-  });
+  };
+  writeSession(session);
+  emitSessionRotated(session);
   lastCallback = { ok: true, at: Date.now() };
   emitLoginSuccess();
   return { ok: true, html: brandPage("登录成功", `欢迎，${displayName(user)}。授权已完成，小龙虾客户端已就绪，关闭本页即可继续配置。`, true) };

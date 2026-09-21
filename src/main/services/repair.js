@@ -7,7 +7,7 @@ const { execFileSync } = require("child_process");
 const { getPaths } = require("../paths");
 const { readConfig, writeConfig } = require("./config-store");
 const { readWecomConfig, readFeishuConfig } = require("./channels");
-const { moduleEntryPath, findQQBotPluginPaths } = require("./modules");
+const { missingModuleFiles, findQQBotPluginPaths } = require("./modules");
 const { isGatewayRunning, startGateway } = require("./process-manager");
 
 function formatBytes(bytes) {
@@ -44,11 +44,12 @@ async function buildRepairChecks() {
   const { modulesCacheDir } = getPaths();
   const gatewayPort = readConfig().gateway?.port || 18789;
   const checks = [];
+  const missing = missingModuleFiles();
   checks.push(buildCheck(
     "OpenClaw 程序文件",
-    fs.existsSync(moduleEntryPath()),
-    "openclaw.mjs 已就绪",
-    "缺少 openclaw.mjs，请重新运行一次客户端完成模块装载",
+    missing.length === 0,
+    "OpenClaw 启动脚本与 dist 运行入口已就绪",
+    `缺少 ${missing.join("、")}，启动网关时将重新装载模块`,
   ));
   const pluginRoot = modulesCacheDir;
   for (const [label, pluginRelative] of [

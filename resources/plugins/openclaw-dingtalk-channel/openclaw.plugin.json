@@ -22,8 +22,5 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": true
-  },
-  "skills": [
-    "./skills"
-  ]
+  }
 }

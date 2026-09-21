@@ -34,12 +34,18 @@
   "usbWatch": {
     "checkIntervalMs": 2000
   },
+  "factoryReset": {
+    "removeAttempts": 6,
+    "removeRetryMs": 300
+  },
+  "diagnostics": {
+    "probeTimeoutMs": 10000
+  },
   "fingerprint": {
     "windowsDriveTypeTimeoutMs": 4000,
     "windowsPowerShellTimeoutMs": 6000,
     "windowsVolumeTimeoutMs": 3000,
     "macDiskutilTimeoutMs": 5000,
-    "macSystemProfilerTimeoutMs": 8000,
     "windowsMachineGuidTimeoutMs": 4000,
     "macMachineUuidTimeoutMs": 5000,
     "macIoregTimeoutMs": 5000

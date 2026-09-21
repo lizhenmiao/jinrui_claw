@@ -8,6 +8,8 @@ const crypto = require("crypto");
 const { getPaths } = require("../paths");
 const { decryptConfigSecrets, encryptConfigSecrets, normalizeProviderModels, writeJsonAtomic } = require("./secret-crypto");
 const { appendLogLine } = require("./logs");
+const timing = require("../../shared/timing.json");
+const { registerSecrets } = require("./diagnostics");
 
 /**
  * 出厂模板：重置与首次读取时使用，网关 token 每次生成随机值。
@@ -44,6 +46,7 @@ function readConfig() {
   try {
     const raw = fs.readFileSync(configPath, "utf8");
     const config = decryptConfigSecrets(JSON.parse(stripBom(raw)));
+    registerSecrets(config);
     if (!config.gateway?.auth?.token) {
       config.gateway = config.gateway || {};
       config.gateway.auth = config.gateway.auth || { mode: "token" };
@@ -90,6 +93,7 @@ function describeProviders(config) {
 }
 
 function writeConfig(input, options = {}) {
+  registerSecrets(input);
   const { configPath } = getPaths();
   const keyPreserved = [];
   let merged = input;
@@ -275,7 +279,6 @@ function syncAgentAuthProfilesFromConfig(config) {
   const { stateDir } = getPaths();
   try {
     const providers = config.models && typeof config.models.providers === "object" ? config.models.providers : {};
-    const providerIds = new Set(Object.keys(providers));
     const agentDir = path.join(stateDir, "agents", "main", "agent");
     fs.mkdirSync(agentDir, { recursive: true });
     const authPath = path.join(agentDir, "auth-profiles.json");
@@ -324,7 +327,7 @@ function syncAgentAuthProfilesFromConfig(config) {
  * 窗口不重绘、IPC 不返回，用户看到的就是"点了恢复出厂直接卡死"。
  * 返回是否删除成功（目标本就不存在也算成功）。
  */
-async function removePathWithRetry(target, attempts = 6, waitMs = 300) {
+async function removePathWithRetry(target, attempts = timing.factoryReset.removeAttempts, waitMs = timing.factoryReset.removeRetryMs) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       await fs.promises.rm(target, { recursive: true, force: true });
@@ -339,18 +342,26 @@ async function removePathWithRetry(target, attempts = 6, waitMs = 300) {
 /** 出厂重置：清空用户痕迹（保留通道依赖的包缓存目录），写入干净模板。
  * 有数据因占用删不掉时如实报错给界面，不静默留残数据（半清状态会让界面显示错的绑定态）。 */
 async function resetAll() {
-  const { dataDir, logsDir, configPath } = getPaths();
-  const keepItems = new Set(["openclaw.json", "secret.key", "extensions", "npm", "plugin-skills", "license.json"]);
+  const { dataDir, stateDir, logsDir, configPath } = getPaths();
+  // 哨兵必须全程存在，异步删除期间拔盘看护仍会正常检查。
+  const keepItems = new Set([path.basename(stateDir), ".usb-present", "extensions", "npm", "plugin-skills", "license.json", "diagnostics"]);
+  // 插件实际安装在 state 目录，保留依赖包但清除 OAuth、账号和聊天数据。
+  const keepStateItems = new Set(["extensions", "plugin-skills"]);
   const failed = [];
+  await fs.promises.mkdir(stateDir, { recursive: true });
   for (const item of await fs.promises.readdir(dataDir)) {
     if (keepItems.has(item)) continue;
     if (!(await removePathWithRetry(path.join(dataDir, item)))) failed.push(item);
+  }
+  for (const item of await fs.promises.readdir(stateDir)) {
+    if (keepStateItems.has(item)) continue;
+    if (!(await removePathWithRetry(path.join(stateDir, item)))) failed.push(`.openclaw/${item}`);
   }
   if (failed.length) {
     throw new Error(`部分数据被进程占用，未能清除：${failed.join("、")}。请稍候重试恢复出厂设置`);
   }
   fs.mkdirSync(logsDir, { recursive: true });
-  fs.mkdirSync(path.join(dataDir, "credentials"), { recursive: true });
+  fs.mkdirSync(path.join(stateDir, "credentials"), { recursive: true });
   writeConfig(buildFactoryConfig(), { replace: true });
   return { ok: true, configPath };
 }

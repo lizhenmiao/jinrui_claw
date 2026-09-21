@@ -13,6 +13,7 @@ const crypto = require("crypto");
 const { app } = require("electron");
 const { getPaths } = require("../paths");
 const { getFingerprint, mask, usbSerialUnavailableMessage } = require("./fingerprint");
+const diagnostics = require("./diagnostics");
 
 const LICENSE_VERSION = 1;
 // 授权签名密钥内置于客户端，用于离线校验授权文件完整性。
@@ -73,7 +74,9 @@ function readLicense(filePath) {
   const json = raw.startsWith("XLX-LICENSE-v1:")
     ? Buffer.from(raw.slice("XLX-LICENSE-v1:".length), "base64").toString("utf8")
     : raw;
-  return JSON.parse(json);
+  const license = JSON.parse(json);
+  diagnostics.registerSecrets(license);
+  return license;
 }
 
 /**
@@ -135,6 +138,7 @@ function verify() {
       return { ok: false, code: "BAD_LICENSE_SIGNATURE", filePath, message: "授权文件签名不正确，可能被修改。" };
     }
     const fp = getFingerprint();
+    diagnostics.record("license-identity-comparison", { filePath, expectedFingerprint: license.payload.deviceFingerprint, expectedIdentity: license.payload.deviceIdentity, observedFingerprint: fp.fingerprint, observedIdentity: fp.identity, available: fp.available, drive: fp.info });
     if (!fp.available) {
       return { ok: false, code: "USB_SERIAL_UNAVAILABLE", filePath, message: usbSerialUnavailableMessage() };
     }
@@ -143,7 +147,7 @@ function verify() {
         ok: false,
         code: "DEVICE_MISMATCH",
         filePath,
-        message: `当前设备未授权。授权=${mask(license.payload.deviceFingerprint)} 当前=${fp.maskedFingerprint}`,
+        message: `当前识别的 U 盘与授权记录不一致。授权=${mask(license.payload.deviceFingerprint)} 当前=${fp.maskedFingerprint}。请确认从原 U 盘启动并查看 fingerprint.log 核对，暂勿重新绑定授权。`,
       };
     }
     return { ok: true, filePath, license, fingerprint: fp.fingerprint, maskedFingerprint: fp.maskedFingerprint, info: fp.info };

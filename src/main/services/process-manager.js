@@ -16,6 +16,30 @@ const { requireModulesDir, ensureModules, isRuntimeWarm, markRuntimeWarm, module
 const { syncBackendModels, reportEvent } = require("./backend-client");
 const { appendLogLine, appendRawLog } = require("./logs");
 const { createQrSession } = require("./qr-session");
+const diagnostics = require("./diagnostics");
+
+/** 保存子进程原始日志，并按完整行提取诊断错误，防止分块输出截断凭据脱敏。 */
+function captureChildOutput(stream, name) {
+  if (!stream) return;
+  // 超长单行仅进入原有日志，不进入随盘诊断包，避免复制提示词或大量聊天正文。
+  let pending = "";
+  let oversized = false;
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    appendRawLog(name, chunk, { diagnostic: false });
+    const lines = String(chunk).split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!oversized) pending += lines[index];
+      if (pending.length > 65536) { pending = ""; oversized = true; }
+      if (index < lines.length - 1) {
+        if (!oversized) diagnostics.captureLog(name, pending);
+        pending = "";
+        oversized = false;
+      }
+    }
+  });
+  stream.on("end", () => { if (pending && !oversized) diagnostics.captureLog(name, pending); });
+}
 
 let gatewayProcess = null;
 let dingTalkBridgeProcess = null;
@@ -45,12 +69,6 @@ const wechatSession = createQrSession({
 /** 网关端口来自应用配置，运营可通过覆盖文件调整。 */
 function gatewayPort() {
   return Number(getAppConfig().ports?.gateway || 18789);
-}
-
-function logDirEnsure() {
-  const { logsDir } = getPaths();
-  fs.mkdirSync(logsDir, { recursive: true });
-  return logsDir;
 }
 
 /** 子进程 PID 登记文件：看护进程轮询它来决定清杀目标。 */
@@ -111,13 +129,9 @@ function registerChild(child) {
 /** 启动业务子进程：日志落盘、环境指向模块缓存与数据目录，可注入附加环境变量。
  * pipeStdout: 输出走管道返回给调用方（而非日志文件），由调用方自行消费与落盘。 */
 function startChild(name, scriptPath, args, options = {}) {
-  const { dataDir, stateDir, configPath, productRoot } = getPaths();
-  const logsDir = logDirEnsure();
+  const { dataDir, stateDir, configPath, productRoot, bridgeDir } = getPaths();
   const modulesDir = requireModulesDir();
-  const stdio = options.pipeStdout
-    ? ["ignore", "pipe", "pipe"]
-    : ["ignore", fs.openSync(path.join(logsDir, `${name}.log`), "a"), fs.openSync(path.join(logsDir, `${name}.err.log`), "a")];
-  const child = spawn(process.execPath, [scriptPath, ...args], {
+  const child = spawn(process.execPath, ["--require", path.join(bridgeDir, "plugin-skills.cjs"), scriptPath, ...args], {
     cwd: productRoot,
     env: {
       ...process.env,
@@ -131,12 +145,22 @@ function startChild(name, scriptPath, args, options = {}) {
       NODE_PATH: [modulesDir, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
       ...(options.extraEnv || {}),
     },
-    stdio,
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     // POSIX 上独立进程组，便于整组终止；Windows 由 taskkill /T 处理进程树。
     detached: process.platform !== "win32",
   });
   child.unref();
+  diagnostics.record("process-start", { name, pid: child.pid, scriptPath, args, modulesDir, cwd: productRoot });
+  if (!options.pipeStdout) {
+    captureChildOutput(child.stdout, `${name}.log`);
+    captureChildOutput(child.stderr, `${name}.err.log`);
+  }
+  child.on("error", (error) => diagnostics.record("process-error", { name, pid: child.pid, error }));
+  child.on("close", (code, signal) => {
+    diagnostics.record("process-close", { name, pid: child.pid, code, signal, stoppedByApp: Boolean(child.stoppedByApp) });
+    if (code !== 0 && !child.stoppedByApp) diagnostics.snapshot(`${name}-failed`);
+  });
   registerChild(child);
   appendLogLine(`${name}.start.log`, `pid=${child.pid} script=${scriptPath}`);
   return child;
@@ -407,12 +431,14 @@ function lastOutputLine(text) {
 function consumeWechatLoginOutput(child) {
   // 本次尝试是否出过码：没出过码就退出属于"组件没起来"，要把原因报给界面，而不是当成普通的二维码过期。
   let sawQr = false;
+  /** 只处理当前尝试的新输出行，避免过期后重新读出历史二维码。 */
   const consume = (chunk) => {
-    const text = chunk.toString();
+    if (child !== wechatLoginProcess || child.stoppedByApp) return;
+    const text = String(chunk);
     wechatLoginOutput += text;
     applyWechatLoginSignal(text);
-    const qr = extractWeixinQrUrl(wechatLoginOutput);
-    if (qr && qr !== wechatSession.snapshot().qr) {
+    const qr = extractWeixinQrUrl(text);
+    if (qr) {
       // 记录从拉起子进程到拿到二维码的耗时，便于排查"重新绑定很慢"这类反馈。
       appendLogLine("wechat-login.log", `qr ready in ${wechatSession.attemptElapsedMs()}ms`);
       // 能出码说明本机组件已经跑起来过，此后的启动不再有冷启动代价。
@@ -423,18 +449,37 @@ function consumeWechatLoginOutput(child) {
     wechatSession.reportQr(qr);
     appendRawLog("wechat-login.log", text);
   };
-  if (child.stdout) child.stdout.on("data", consume);
-  if (child.stderr) child.stderr.on("data", consume);
+  // 每条管道分别解码与拼接，中文和链接跨数据块时仍按完整行解析。
+  for (const stream of [child.stdout, child.stderr]) {
+    if (!stream) continue;
+    // 当前管道尚未收到换行符的输出片段。
+    let pendingLine = "";
+    stream.setEncoding("utf8");
+    /** 消费完整输出行，保留未结束的片段等待后续数据。 */
+    stream.on("data", (chunk) => {
+      pendingLine += chunk;
+      const lines = pendingLine.split("\n");
+      pendingLine = lines.pop();
+      for (const line of lines) consume(`${line}\n`);
+    });
+    /** 管道关闭时处理没有换行符的最后一段输出。 */
+    stream.on("end", () => {
+      if (pendingLine) consume(pendingLine);
+      pendingLine = "";
+    });
+  }
   child.on("error", (error) => {
+    if (child !== wechatLoginProcess || child.stoppedByApp) return;
     appendRawLog("wechat-login.log", `login process error: ${error.message}`);
     wechatLoginFailure = `微信登录进程启动失败：${error.message}`;
     wechatSession.reportStatus("failed", wechatLoginFailure);
   });
   // 进程结束但未绑定成功（超时、被清杀）：会话回到待重建，由状态查询按冷却重建。
-  child.on("exit", (code, signal) => {
+  child.on("close", (code, signal) => {
+    if (child !== wechatLoginProcess || child.stoppedByApp) return;
     const exitInfo = `code=${code == null ? "-" : code} signal=${signal || "-"}`;
     appendLogLine("wechat-login.log", `login process exited ${exitInfo}`);
-    if (sawQr || child.stoppedByApp) {
+    if (sawQr) {
       wechatSession.attemptEnded();
       return;
     }
@@ -494,6 +539,7 @@ function resetWechatLoginState() {
   wechatSession.reset();
   wechatRebinding = false;
   wechatRebindBaseline = [];
+  wechatLoginFailure = "";
 }
 
 /**

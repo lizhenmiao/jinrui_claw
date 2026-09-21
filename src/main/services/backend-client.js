@@ -35,17 +35,16 @@ function writeLog(message, details) {
 
 /**
  * 后台接入信息。授权码只来自本盘绑定文件（--bind-usb --license 写入），一张盘一个授权码，所以同一个安装包能发给不同客户，包内不保留任何授权码。
- * 后台地址与产品版本来自包内配置，地址不允许外部提供（能被改就等于架空授权）。
+ * 后台地址来自包内配置，产品版本来自 package.json，地址不允许外部提供。
  * 这里不声明 channel：下发版本与模型走哪条通道，由后台按授权记录上的 channel 决定。
  */
 function readBackendSettings() {
   const backend = getAppConfig().backend || {};
-  const product = getAppConfig().product || {};
   return {
     licenseKey: boundLicenseKey(),
     backendUrl: String(backend.url || "").trim().replace(/\/+$/, ""),
-    // 版本号单一来源：package.json（打包后即 app.getVersion()）；配置里若写了 product.version 则优先用它。
-    clientVersion: String(product.version || app.getVersion() || "unknown").trim(),
+    // 版本号唯一来源为 package.json，运营配置不能覆盖客户端版本。
+    clientVersion: String(app.getVersion()).trim(),
   };
 }
 
@@ -159,6 +158,7 @@ async function checkBackendLicense(override = {}) {
       driveFs: ctx.driveFs,
       clientVersion: ctx.clientVersion,
     });
+    require("./diagnostics").record("backend-license-result", { ok: true, usbId: ctx.usbId, machineId: ctx.machineId });
     writeLog("backend license check success", { usbId: ctx.usbId });
     await reportEvent({ eventType: "license_check_success", level: "info", message: "Backend license check succeeded." });
     return { ok: true, data };
@@ -172,6 +172,7 @@ async function checkBackendLicense(override = {}) {
       code: error.code || "BACKEND_UNREACHABLE",
     };
     writeLog(rejected ? "backend license rejected" : "backend license check unreachable", result);
+    require("./diagnostics").record("backend-license-result", { ...result, usbId: ctx.usbId, machineId: ctx.machineId });
     return result;
   }
 }
@@ -314,6 +315,7 @@ function licenseRejectionHint(code) {
  * 界面激活与命令行绑定共用这一条路径，保证两种入口行为一致。
  */
 async function bindUsbWithLicense(licenseKey) {
+  require("./diagnostics").registerSecrets({ licenseKey });
   const code = String(licenseKey || "").trim();
   const check = await checkBackendLicense({ licenseKey: code });
   if (check.rejected) {

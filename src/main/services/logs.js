@@ -5,6 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 const { getPaths } = require("../paths");
+const diagnostics = require("./diagnostics");
 
 /** 展示净化：压缩空白、剔除二维码链接与块字符画，截断超长行。 */
 function sanitizeUiLogLine(message) {
@@ -72,7 +73,8 @@ function readRecentLogs() {
 }
 
 /** 追加原始内容到指定日志文件（时间戳与换行由调用方给出）。日志失败不影响业务。 */
-function appendRawLog(name, text) {
+function appendRawLog(name, text, { diagnostic = true } = {}) {
+  if (diagnostic) diagnostics.captureLog(name, text);
   try {
     const { logsDir } = getPaths();
     fs.mkdirSync(logsDir, { recursive: true });

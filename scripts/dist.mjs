@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import runtimeLayout from "../src/shared/runtime-layout.cjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_DIRS = ["src/main", "src/preload"];
@@ -96,6 +97,7 @@ function stagePackagedConfig() {
   const target = path.join(PROJECT_ROOT, PACKAGED_CONFIG_RELATIVE);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+  fs.writeFileSync(path.join(PROJECT_ROOT, "out", "build-info.json"), JSON.stringify({ version: projectVersion(), builtAt: new Date().toISOString(), platform: process.platform, arch: process.arch }, null, 2) + "\n", "utf8");
   console.log(`[dist] 已暂存运营配置 → ${PACKAGED_CONFIG_RELATIVE}（打包用，二进制与源文件一致）`);
 }
 
@@ -128,6 +130,41 @@ function asarHasPath(entries, relativePath) {
   return Boolean(node);
 }
 
+/** 校验随包插件声明的技能目录含实际技能文件，避免空目录在 Git 或打包时消失。 */
+function verifyPluginSkills(resourcesRoot) {
+  const pluginsRoot = path.join(resourcesRoot, "plugins");
+  for (const entry of fs.readdirSync(pluginsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const pluginRoot = path.join(pluginsRoot, entry.name);
+    const manifestPath = path.join(pluginRoot, "openclaw.plugin.json");
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8").replace(/^\uFEFF/, ""));
+    for (const declared of manifest.skills || []) {
+      const directory = path.resolve(pluginRoot, declared);
+      const relative = path.relative(pluginRoot, directory);
+      if (relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(directory)) {
+        throw new Error(`插件 ${entry.name} 的技能目录不存在或越界：${declared}`);
+      }
+      const candidates = [directory, ...fs.readdirSync(directory, { withFileTypes: true }).filter((item) => item.isDirectory()).map((item) => path.join(directory, item.name))];
+      if (!candidates.some((candidate) => fs.existsSync(path.join(candidate, "SKILL.md")) && fs.statSync(path.join(candidate, "SKILL.md")).isFile())) {
+        throw new Error(`插件 ${entry.name} 的技能目录没有 SKILL.md：${declared}`);
+      }
+    }
+  }
+  if (!fs.existsSync(path.join(resourcesRoot, "bridge", "plugin-skills.cjs"))) throw new Error("发行资源缺少便携技能发布适配");
+}
+
+/** 打包前后校验模块压缩包内包含真正运行入口，避免发行只有启动壳文件的模块包。 */
+function verifyRuntimeArchive(resourcesRoot) {
+  const archive = path.join(resourcesRoot, "payload", "openclaw-modules.tar.gz");
+  const tarExecutable = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
+  const listing = spawnSync(tarExecutable, ["-tzf", archive], { encoding: "utf8", windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+  if (listing.error || listing.status !== 0) throw new Error(`无法检查运行模块包：${listing.error?.message || listing.stderr || archive}`);
+  const entries = new Set(listing.stdout.split(/\r?\n/).map((name) => name.replace(/^\.\//, "")));
+  const missing = runtimeLayout.missingRuntimeFiles((relative) => entries.has(`node_modules/${relative}`));
+  if (missing.length) throw new Error(`运行模块包缺少 ${missing.join("、")}`);
+}
+
 /** 递归找出产物目录下所有 app.asar（Windows 目录版与 mac 的 .app 各在不同层级）。 */
 function findAsarFiles(dir, found = [], depth = 0) {
   if (depth > 6) return found;
@@ -153,8 +190,11 @@ function verifyPackagedConfig() {
   const failures = [];
   for (const asarPath of asarFiles) {
     const resourcesRoot = path.dirname(asarPath);
+    verifyPluginSkills(resourcesRoot);
+    verifyRuntimeArchive(resourcesRoot);
     const label = path.relative(releaseDir, asarPath);
     const entries = asarEntries(asarPath);
+    if (!asarHasPath(entries, "out/build-info.json") && !fs.existsSync(path.join(resourcesRoot, "app", "out", "build-info.json"))) throw new Error(`打包产物缺少诊断构建标识：${label}`);
     const inAsar = asarHasPath(entries, PACKAGED_CONFIG_RELATIVE);
     const inAppDir = fs.existsSync(path.join(resourcesRoot, "app", PACKAGED_CONFIG_RELATIVE));
     const topLevel = Object.keys(entries.files || {}).join(", ");
@@ -213,6 +253,10 @@ function runBuilder(platform) {
 }
 
 const target = process.argv[2];
+// 标签发布必须与包内版本一致，避免更新检查、客户端标题与下载页显示不同版本。
+if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME !== `v${projectVersion()}`) {
+  fail(`发布标签 ${process.env.GITHUB_REF_NAME} 与 package.json 版本 v${projectVersion()} 不一致`);
+}
 if (!["--win", "--mac"].includes(target)) {
   fail("用法: node scripts/dist.mjs --win | --mac");
 }
@@ -240,6 +284,8 @@ try {
   throw error;
 }
 
+verifyPluginSkills(path.join(PROJECT_ROOT, "resources"));
+verifyRuntimeArchive(path.join(PROJECT_ROOT, "resources"));
 fs.rmSync(path.join(PROJECT_ROOT, "out", "renderer"), { recursive: true, force: true });
 const vite = spawnSync(process.execPath, ["node_modules/vite/bin/vite.js", "build"], {
   cwd: PROJECT_ROOT,

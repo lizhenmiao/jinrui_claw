@@ -16,6 +16,7 @@ const { appendWechatLoginLog } = require("./services/logs");
 const oauth = require("./services/oauth");
 const oauthListener = require("./services/oauth-listener");
 const keepalive = require("./services/keepalive");
+const diagnostics = require("./services/diagnostics");
 
 // macOS 26 GPU/字体渲染路径存在崩溃问题，仅 darwin 关闭硬件加速。
 if (process.platform === "darwin") {
@@ -28,6 +29,7 @@ let mainWindow = null;
 let isQuitting = false;
 
 function logLine(message) {
+  diagnostics.record("app-log", { message });
   const line = `[${new Date().toISOString()}] ${message}`;
   console.log(line);
   try {
@@ -119,6 +121,7 @@ async function runCliCommand() {
     code = 1;
   }
   // app.exit 正常即可结束；个别环境（杀软正在扫描刚解压出来的 exe、外部句柄未释放）可能拖住进程，兜一个定时强制退出，避免终端卡在一条不返回的命令上。
+  diagnostics.record("cli-exit", { command: cliCommand, code });
   app.exit(code);
   setTimeout(() => process.exit(code), 1500);
   return true;
@@ -163,9 +166,13 @@ async function bootCore(onStage) {
   onStage("正在校验授权…");
   if (license.shouldRequireLicense()) {
     const verification = license.verify();
+    diagnostics.record("license-result", { ok: verification.ok, code: verification.code, message: verification.message, filePath: verification.filePath });
     if (!verification.ok) {
-      // 界面据此把加载页换成"输入授权码"表单（绑定会同时写本地文件与后台记录）。
-      throw failLicenseRequired(`${verification.message}该 U 盘尚未绑定授权，请输入授权码完成绑定。`);
+      logLine(`license check failed code=${verification.code} path=${verification.filePath}`);
+      if (verification.code === "MISSING_LICENSE") throw failLicenseRequired(`${verification.message}请确认从 U 盘内启动；新 U 盘请输入授权码完成绑定。`);
+      const error = new Error(verification.message);
+      error.code = verification.code;
+      throw error;
     }
   }
   logLine("license ok");
@@ -181,6 +188,11 @@ async function bootCore(onStage) {
   }
   // 只有后台明确拒绝（授权无效/过期/U 盘不匹配）才拦启动；连不上后台属"无法判定"，放过并记日志——否则后台故障或离线环境会让所有客户端集体打不开，此时本地授权仍在把关。
   if (backendLicense.rejected) {
+    if (backendLicense.code === "USB_MISMATCH") {
+      const error = new Error("后台记录的 U 盘身份与本次识别结果不一致，请查看 fingerprint.log 与 backend-client.log 核对，暂勿重新绑定授权。");
+      error.code = backendLicense.code;
+      throw error;
+    }
     // 后台明确拒绝（授权不存在/禁用/过期/已绑别的盘）：也交给界面重新输入授权码，用户不必回到命令行。
     throw failLicenseRequired(backendLicense.message || "后台授权校验未通过。");
   }
@@ -239,11 +251,15 @@ async function runBoot() {
   bootState = { status: "booting", message: "" };
   sendBootState();
   try {
+    diagnostics.snapshot("boot-attempt");
     await bootCore((message) => {
+      diagnostics.record("boot-stage", { message });
       bootState = { status: "booting", message };
       sendBootState();
     });
   } catch (error) {
+    diagnostics.record("boot-failed", { error });
+    diagnostics.snapshot("boot-failed");
     const message = error?.message || String(error);
     logLine(`boot failed: ${message}`);
     appendWechatLoginLog(`boot failed: ${message}`);
@@ -265,7 +281,7 @@ ipcMain.handle("app:retryBoot", () => {
 });
 
 function createMainWindow() {
-  const productVersion = String(require("./app-config").getAppConfig().product?.version || app.getVersion());
+  const productVersion = String(app.getVersion());
   mainWindow = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -309,8 +325,12 @@ function createMainWindow() {
       .catch((error) => logLine(`renderer load failed: ${error.message}`));
   }
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    diagnostics.record("renderer-gone", details);
     logLine(`renderer gone: ${details.reason} exit=${details.exitCode}`);
   });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => diagnostics.record("renderer-load-failed", { errorCode, errorDescription, validatedURL }));
+  mainWindow.on("unresponsive", () => diagnostics.record("window-unresponsive"));
+  mainWindow.on("responsive", () => diagnostics.record("window-responsive"));
   mainWindow.once("ready-to-show", () => {
     logLine("renderer ready");
     mainWindow && mainWindow.show();
@@ -337,6 +357,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    diagnostics.start(app);
     if (await runCliCommand()) return;
     registerIpcHandlers();
     // 窗口先行：加载页立刻可见（模块解压在后台不再是黑等），启动核心在后台进行，失败在窗口错误页展示并支持重试。
@@ -361,6 +382,10 @@ if (!gotLock) {
   });
 
   process.on("uncaughtException", (error) => {
+    diagnostics.record("uncaught-exception", { error });
     logLine(`uncaught exception: ${error.message}`);
   });
+  process.on("unhandledRejection", (error) => diagnostics.record("unhandled-rejection", { error }));
+  app.on("child-process-gone", (_event, details) => diagnostics.record("electron-child-gone", details));
+  app.on("will-quit", () => { diagnostics.snapshot("shutdown"); diagnostics.record("session-exit"); });
 }

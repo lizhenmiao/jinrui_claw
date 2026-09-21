@@ -9,6 +9,21 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { getPaths } = require("../paths");
 const timing = require("../../shared/timing.json");
+const { appendLogLine } = require("./logs");
+const diagnostics = require("./diagnostics");
+
+/** 记录身份查询命令的原始输出和耗时，失败时也保留系统返回的错误。 */
+function runIdentityCommand(command, args, options) {
+  const started = Date.now();
+  try {
+    const stdout = execFileSync(command, args, options);
+    diagnostics.commandResult(command, args, stdout, "", null, Date.now() - started);
+    return stdout;
+  } catch (error) {
+    diagnostics.commandResult(command, args, error.stdout, error.stderr, error, Date.now() - started);
+    throw error;
+  }
+}
 
 // 产品级盐值：用于把硬件序列号转换成不直接外传原值的本地指纹。
 const PRODUCT_SALT = "zgy-openclaw-portable-v1";
@@ -37,89 +52,44 @@ function usableSerial(value) {
 
 /** 返回无法读取 USB 硬件序列号时的统一处理提示。 */
 function usbSerialUnavailableMessage() {
-  return "无法读取 U 盘硬件序列号，请确认程序是从 U 盘启动，并更换一个能提供 USB 序列号的 U 盘后重试。";
+  return "未能确认当前 U 盘的硬件身份。请确认程序位于 U 盘内并重新插入后点重试；已有授权无需重新绑定，可查看 fingerprint.log 排查识别原因。";
 }
 
-/** 取 macOS USB 设备名称的可比较形式，用于把挂载卷映射到物理 USB 设备。 */
-function normalizeLabel(value) {
-  return String(value || "").toLowerCase().replace(/[^0-9a-z\u4e00-\u9fff]/gi, "");
-}
-
-/** 从 system_profiler 的嵌套 JSON 中收集带硬件序列号的 USB 设备。 */
-function collectMacUsbDevices(value, devices = []) {
-  if (Array.isArray(value)) {
-    for (const item of value) collectMacUsbDevices(item, devices);
-    return devices;
-  }
-  if (!value || typeof value !== "object") return devices;
-
-  const serial = value.serial_num || value.serialNumber || value.usb_serial_number || value["USB Serial Number"] || value.kUSBSerialNumberString;
-  if (serial) {
-    devices.push({
-      serial,
-      labels: [value._name, value.name, value.product_name, value.product, value.bsd_name, value.bsdName, value.device_node, value.deviceNode],
-    });
-  }
-  for (const child of Object.values(value)) collectMacUsbDevices(child, devices);
-  return devices;
-}
-
-/** 从 macOS ioreg 文本中收集 USB 设备的硬件序列号。 */
-function collectMacIoregUsbDevices(output) {
-  return String(output || "")
-    .split(/\n(?=\s*(?:\|[ \t]*)?\+-o )/)
-    .map((block) => {
-      const name = (block.match(/^\s*(?:\|[ \t]*)?\+-o\s+(.+?)\s+<class/m) || [])[1] || "";
-      const product = (block.match(/\"(?:USB Product Name|kUSBProductString|Product Name)\"\s*=\s*\"([^\"]+)\"/i) || [])[1] || "";
-      const serial = (block.match(/\"(?:USB Serial Number|kUSBSerialNumberString|Serial Number)\"\s*=\s*\"([^\"]+)\"/i) || [])[1] || "";
-      return { serial, labels: [name, product] };
-    })
-    .filter((device) => device.serial || device.labels.some(Boolean));
-}
-
-/** 从候选 USB 设备中选择与当前挂载卷对应的硬件序列号。 */
-function selectMacUsbSerial(devices, mediaName, diskNode) {
-  const usableDevices = devices
-    .map((device) => ({ ...device, serial: usableSerial(device.serial) }))
-    .filter((device) => device.serial);
-  if (!usableDevices.length) return "";
-
-  const normalizedMediaName = normalizeLabel(mediaName);
-  const normalizedDiskNode = normalizeLabel(diskNode);
-  const ranked = usableDevices.map((device) => {
-    const labels = (device.labels || []).map(normalizeLabel).filter(Boolean);
-    let score = 0;
-    if (normalizedDiskNode && labels.some((label) => label === normalizedDiskNode || label.includes(normalizedDiskNode))) score = Math.max(score, 10);
-    if (normalizedMediaName && labels.some((label) => label === normalizedMediaName || label.includes(normalizedMediaName) || normalizedMediaName.includes(label))) score = Math.max(score, 6);
-    return { ...device, score };
-  });
-  const matched = ranked.filter((device) => device.score > 0).sort((left, right) => right.score - left.score);
-  if (matched.length) {
-    const highestScore = matched[0].score;
-    const highest = matched.filter((device) => device.score === highestScore);
-    return highest.length === 1 ? highest[0].serial : "";
-  }
-  return usableDevices.length === 1 ? usableDevices[0].serial : "";
-}
-
-/** 从 system_profiler 与 IORegistry 依次读取 macOS USB 硬件序列号。 */
-function readMacUsbSerial(mediaName, diskNode) {
-  try {
-    for (const dataType of ["SPUSBHostDataType", "SPUSBDataType"]) {
-      try {
-        const stdout = execFileSync("system_profiler", [dataType, "-json"], { encoding: "utf8", timeout: timing.fingerprint.macSystemProfilerTimeoutMs });
-        const serial = selectMacUsbSerial(collectMacUsbDevices(JSON.parse(stdout || "{}")), mediaName, diskNode);
-        if (serial) return serial;
-      } catch {
-        // 当前数据类型不可用时继续尝试下一个来源。
-      }
+/** 沿 IOService 树将 BSD 磁盘名定位到最近的 USB 设备，禁止使用旁边设备或上层 Hub 的序列号。 */
+function selectMacUsbSerial(output, diskNode) {
+  // 栈保存当前节点的祖先链；同名型号、多层转接和枚举顺序都不参与身份选择。
+  const stack = [];
+  const matches = [];
+  for (const line of String(output || "").split(/\r?\n/)) {
+    const node = line.match(/^([ |]*)\+-o\s+(.+?)\s+<class\s+([^,>]+)/);
+    if (node) {
+      const depth = node[1].length;
+      while (stack.length && stack[stack.length - 1].depth >= depth) stack.pop();
+      stack.push({ depth, usb: /(?:^|:)(?:IOUSBHostDevice|IOUSBDevice)$/.test(node[3]), serial: "", deviceClass: "" });
+      continue;
     }
-
-    const ioregOutput = execFileSync("ioreg", ["-p", "IOUSB", "-l", "-w", "0"], { encoding: "utf8", timeout: timing.fingerprint.macIoregTimeoutMs });
-    return selectMacUsbSerial(collectMacIoregUsbDevices(ioregOutput), mediaName, diskNode);
-  } catch {
-    return "";
+    const current = stack[stack.length - 1];
+    if (!current) continue;
+    const serial = line.match(/^[ |]*"(?:USB Serial Number|kUSBSerialNumberString)"\s*=\s*"([^"]*)"/);
+    if (serial) current.serial = usableSerial(serial[1]);
+    const deviceClass = line.match(/^[ |]*"bDeviceClass"\s*=\s*(\d+)/);
+    if (deviceClass) current.deviceClass = deviceClass[1];
+    const bsd = line.match(/^[ |]*"BSD Name"\s*=\s*"([^"]+)"/);
+    if (!bsd || bsd[1] !== diskNode) continue;
+    const device = [...stack].reverse().find((entry) => entry.usb);
+    matches.push(device && !["9", "17"].includes(device.deviceClass) ? device.serial : "");
   }
+  return matches.length === 1 ? matches[0] : "";
+}
+
+/** 读取包含磁盘父子关系的 IOService 树，只查询当前物理磁盘的 USB 身份。 */
+function readMacUsbSerial(diskNode) {
+  // 完整 IOService 树可能超过 Node 默认的 1 MiB 输出上限。
+  const registryMaxBytes = 32 * 1024 * 1024;
+  const output = runIdentityCommand("ioreg", ["-p", "IOService", "-l", "-w", "0"], {
+    encoding: "utf8", timeout: timing.fingerprint.macIoregTimeoutMs, maxBuffer: registryMaxBytes,
+  });
+  return selectMacUsbSerial(output, diskNode);
 }
 
 /** 取程序所在存储卷的根路径；macOS 必须保留 /Volumes/卷名，不能退化成系统根目录。 */
@@ -162,13 +132,13 @@ if ($partition) {
 `;
   const fallback = () => {
     try {
-      return execFileSync("cmd.exe", ["/d", "/s", "/c", `vol ${drive}`], { encoding: "utf8", timeout: timing.fingerprint.windowsVolumeTimeoutMs, windowsHide: true });
+      return runIdentityCommand("cmd.exe", ["/d", "/s", "/c", `vol ${drive}`], { encoding: "utf8", timeout: timing.fingerprint.windowsVolumeTimeoutMs, windowsHide: true });
     } catch {
       return "";
     }
   };
   try {
-    const stdout = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+    const stdout = runIdentityCommand("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
       encoding: "utf8",
       timeout: timing.fingerprint.windowsPowerShellTimeoutMs,
       windowsHide: true,
@@ -188,24 +158,26 @@ if ($partition) {
 /** macOS 卷信息：从程序所在挂载卷定位物理 USB 设备，再读取其硬件序列号。 */
 function readMacDriveInfo(volumePath) {
   try {
-    // diskutil 直接接受挂载卷内的路径，可正确解析嵌套在 U 盘目录中的应用。
-    const infoStdout = execFileSync("diskutil", ["info", volumePath], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
+    // 查询挂载卷根目录，避免把嵌套应用目录或 Mac 系统根目录当成存储卷。
+    const infoStdout = runIdentityCommand("diskutil", ["info", volumePath], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
     const volumeUUID = (infoStdout.match(/Volume UUID:\s*(\S+)/i) || [])[1] || "";
     const volumeName = (infoStdout.match(/Volume Name:\s*(.+)\r?\n/i) || [])[1] || "";
     let mediaName = (infoStdout.match(/Device \/ Media Name:\s*(.+)\r?\n/i) || [])[1] || "";
     const fileSystem = (infoStdout.match(/Type \(Bundle\):\s*(\S+)/i) || [])[1] || "";
     const deviceNode = (infoStdout.match(/Device Node:\s*(\S+)/i) || [])[1] || "";
 
-    const diskNode = deviceNode.replace(/s\d+$/, "");
+    const diskNode = (infoStdout.match(/Part of Whole:\s*(disk\d+)/i) || [])[1] || deviceNode.replace(/^\/dev\//, "").replace(/(?:s\d+)+$/, "");
+    if (!/^disk\d+$/.test(diskNode)) throw new Error("无法定位当前卷所属的物理磁盘");
     if (!mediaName && diskNode) {
       try {
-        const diskInfoStdout = execFileSync("diskutil", ["info", `/dev/${diskNode}`], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
+        const diskInfoStdout = runIdentityCommand("diskutil", ["info", `/dev/${diskNode}`], { encoding: "utf8", timeout: timing.fingerprint.macDiskutilTimeoutMs });
         mediaName = (diskInfoStdout.match(/Device \/ Media Name:\s*(.+)\r?\n/i) || [])[1] || "";
       } catch {
-        // 分区信息没有媒体名称时，仍继续使用 USB 设备序列号匹配。
+        // 媒体名称只用于诊断，不影响按 BSD 磁盘节点关联 USB 设备。
       }
     }
-    const diskSerial = readMacUsbSerial(mediaName, diskNode);
+    const diskSerial = readMacUsbSerial(diskNode);
+    appendLogLine("fingerprint.log", `mac volume=${volumePath} device=${deviceNode} whole=${diskNode} source=IOService serial=${mask(diskSerial)} result=${diskSerial ? "matched" : "unresolved"}`);
     return { 
       volumeSerial: volumeUUID, 
       diskSerial, 
@@ -213,24 +185,25 @@ function readMacDriveInfo(volumePath) {
       mediaName: mediaName.trim(),
       fileSystem 
     };
-  } catch {
+  } catch (error) {
+    appendLogLine("fingerprint.log", `mac volume=${volumePath} identification failed: ${error.message}`);
     return { volumeSerial: "", diskSerial: "" };
   }
 }
 
 let cachedDriveInfo = null;
 /**
- * 读取 U 盘信息。Windows 下要起一次 PowerShell，所以进程生命周期内只读一次并缓存：
- * 拔盘会直接退出应用，不存在读到过期值的场景。
+ * 读取 U 盘信息，成功识别后在进程生命周期内缓存；失败不缓存，允许重试重新探测。
+ * 拔盘会直接退出应用，不存在成功缓存跨 U 盘复用的场景。
  */
 function readDriveInfo() {
-  if (cachedDriveInfo) return cachedDriveInfo;
+  if (cachedDriveInfo?.diskSerial) return cachedDriveInfo;
   const productRoot = getPaths().productRoot;
   const root = driveRoot(productRoot);
   if (process.platform === "win32") {
     cachedDriveInfo = { platform: "win32", root, ...readWindowsDriveInfo(root) };
   } else if (process.platform === "darwin") {
-    cachedDriveInfo = { platform: "darwin", root, ...readMacDriveInfo(productRoot) };
+    cachedDriveInfo = { platform: "darwin", root, ...readMacDriveInfo(root) };
   } else {
     cachedDriveInfo = { platform: process.platform, root, volumeSerial: "" };
   }
@@ -271,7 +244,7 @@ function getUsbId() {
 function readMachineIdentity() {
   try {
     if (process.platform === "win32") {
-      const stdout = execFileSync("reg", ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"], {
+      const stdout = runIdentityCommand("reg", ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"], {
         encoding: "utf8",
         timeout: timing.fingerprint.windowsMachineGuidTimeoutMs,
         windowsHide: true,
@@ -279,7 +252,7 @@ function readMachineIdentity() {
       return (stdout.match(/MachineGuid\s+REG_SZ\s+(\S+)/i) || [])[1] || "";
     }
     if (process.platform === "darwin") {
-      const stdout = execFileSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", timeout: timing.fingerprint.macMachineUuidTimeoutMs });
+      const stdout = runIdentityCommand("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", timeout: timing.fingerprint.macMachineUuidTimeoutMs });
       return (stdout.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/) || [])[1] || "";
     }
     for (const file of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {

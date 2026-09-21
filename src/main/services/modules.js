@@ -6,6 +6,8 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { getPaths } = require("../paths");
+const { missingRuntimeFiles } = require("../../shared/runtime-layout.cjs");
+const diagnostics = require("./diagnostics");
 
 /** 解压临时目录名前缀（后缀是进程号+时间戳），残留清理按它识别。 */
 const STAGING_PREFIX = "_extracting-";
@@ -22,6 +24,7 @@ let extracting = null;
 let lastExtractError = "";
 
 function log(message) {
+  diagnostics.record("modules", { message });
   try {
     const { logsDir } = getPaths();
     fs.mkdirSync(logsDir, { recursive: true });
@@ -33,9 +36,22 @@ function moduleEntryPath() {
   return path.join(getPaths().modulesCacheDir, "openclaw", "openclaw.mjs");
 }
 
+/** 检查运行模块关键文件是否可读且非空，防止只有启动壳文件的缓存被当成完整模块。 */
+function missingModuleFiles(root = getPaths().modulesCacheDir) {
+  return missingRuntimeFiles((relative) => {
+    try {
+      const file = path.join(root, relative);
+      const stat = fs.statSync(file);
+      fs.accessSync(file, fs.constants.R_OK);
+      return stat.isFile() && stat.size > 0;
+    } catch { return false; }
+  });
+}
+
+/** 缓存标记与关键入口文件同时通过才算就绪。 */
 function isReady() {
   const { modulesCacheDir } = getPaths();
-  return fs.existsSync(path.join(modulesCacheDir, ".zgy-extract-ready")) && fs.existsSync(moduleEntryPath());
+  return fs.existsSync(path.join(modulesCacheDir, ".zgy-extract-ready")) && missingModuleFiles(modulesCacheDir).length === 0;
 }
 
 /**
@@ -69,6 +85,12 @@ async function sweepStaleStaging(cacheParent) {
   try { entries = await fs.promises.readdir(cacheParent, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith(STAGING_PREFIX)) continue;
+    // 仅清理所属进程已不存在的暂存目录，不能删除当前或其它实例仍在解压的树。
+    const ownerPid = Number(entry.name.slice(STAGING_PREFIX.length).split("-")[0]);
+    if (!Number.isInteger(ownerPid) || ownerPid <= 0) continue;
+    try { process.kill(ownerPid, 0); continue; } catch (error) {
+      if (error.code !== "ESRCH") continue;
+    }
     try { await removeDir(path.join(cacheParent, entry.name)); } catch { /* 正被别人写，留给它自己清 */ }
   }
 }
@@ -104,6 +126,8 @@ function extractArchive(archive, cacheParent) {
       try {
         const extracted = path.join(staging, "node_modules");
         if (!fs.existsSync(extracted)) throw new Error("压缩包缺少 node_modules");
+        const missing = missingModuleFiles(extracted);
+        if (missing.length) throw new Error(`模块包不完整，缺少运行文件：${missing.join("、")}。请更新安装包`);
         fs.writeFileSync(path.join(extracted, ".zgy-extract-ready"), `extractedAt=${new Date().toISOString()}\narchive=${archive}\n`, "utf8");
         const finalDir = path.join(cacheParent, "node_modules");
         await removeDir(finalDir);
@@ -116,6 +140,7 @@ function extractArchive(archive, cacheParent) {
         }
         try { await removeDir(staging); } catch { /* 临时目录清理失败无害 */ }
         log("extract complete");
+        diagnostics.snapshot("modules-extracted");
         resolve();
       } catch (error) {
         reject(error);
@@ -138,6 +163,7 @@ async function ensureModules() {
     throw new Error(lastExtractError);
   }
   if (!extracting) {
+    log(`cache not ready; missing=${missingModuleFiles(modulesCacheDir).join(",") || "ready marker"}; rebuilding`);
     extracting = extractArchive(payloadArchive, path.dirname(modulesCacheDir))
       .finally(() => { extracting = null; });
   }
@@ -145,10 +171,12 @@ async function ensureModules() {
     await extracting;
   } catch (error) {
     lastExtractError = error.message;
+    diagnostics.record("modules-failed", { error });
+    diagnostics.snapshot("modules-failed");
     throw error;
   }
-  if (!fs.existsSync(moduleEntryPath())) {
-    lastExtractError = "解压后未找到 openclaw.mjs";
+  if (!isReady()) {
+    lastExtractError = `解压后运行模块仍不完整：${missingModuleFiles(modulesCacheDir).join("、") || "缺少就绪标记"}`;
     throw new Error(lastExtractError);
   }
   lastExtractError = "";
@@ -294,6 +322,7 @@ module.exports = {
   isRuntimeWarm,
   markRuntimeWarm,
   moduleEntryPath,
+  missingModuleFiles,
   modulesStatus,
   requireModulesDir,
 };

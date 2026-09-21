@@ -258,7 +258,7 @@ async function renderQrSvg(data) {
     ok: true,
     info: {
       productId: getAppConfig().product?.displayName,
-      version: getAppConfig().product?.version || app.getVersion(),
+      version: app.getVersion(),
       platform: `${process.platform} / ${process.arch}`,
       runtime: `electron ${process.versions.electron} (node ${process.versions.node})`,
       ports: getAppConfig().ports,
