@@ -151,7 +151,9 @@ function verifyPluginSkills(resourcesRoot) {
       }
     }
   }
-  if (!fs.existsSync(path.join(resourcesRoot, "bridge", "plugin-skills.cjs"))) throw new Error("发行资源缺少便携技能发布适配");
+  for (const helper of ["plugin-skills.cjs", "portable-secrets.cjs"]) {
+    if (!fs.existsSync(path.join(resourcesRoot, "bridge", helper))) throw new Error(`发行资源缺少便携适配：${helper}`);
+  }
 }
 
 /** 打包前后校验模块压缩包内包含真正运行入口，避免发行只有启动壳文件的模块包。 */

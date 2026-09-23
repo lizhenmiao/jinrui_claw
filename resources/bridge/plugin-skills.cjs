@@ -108,6 +108,14 @@ function adaptPluginSkills(source) {
   return helper + source.slice(0, start).replace(/function resolvePluginSkillLinkType\(platform = process\.platform\) \{[\s\S]*?\n\}\n/, "") + replacement + source.slice(end);
 }
 
+/** 只适配派生凭据写入入口，其余秘密文件继续保留上游完整的安全限制。 */
+function adaptSecretFiles(source) {
+  const signature = "async function writeSecretFileAtomic(params) {";
+  if (source.split(signature).length !== 2) throw new Error("OpenClaw 凭据写入实现变化，需要更新便携适配");
+  const helper = pathToFileURL(path.join(__dirname, "portable-secrets.cjs")).href;
+  return `import portableSecrets from ${JSON.stringify(helper)};\n` + source.replace(signature, `${signature}\n if (portableSecrets.supports(params)) return portableSecrets.writeSecretFile(params);`);
+}
+
 /** 仅适配当前模块缓存中技能发布模块的源码，不改磁盘缓存或其它文件系统操作。 */
 function install() {
   const modulesRoot = process.env.OPENCLAW_MODULES_DIR;
@@ -116,6 +124,11 @@ function install() {
   const modules = fs.readdirSync(dist).filter((name) => /^plugin-skills-[\w-]+\.js$/.test(name));
   if (modules.length !== 1) throw new Error("无法唯一定位 OpenClaw 技能发布模块，需要更新便携适配");
   const skillModule = path.join(dist, modules[0]);
+  // 同名前缀还包含只读工具，仅选择真正定义原子写入函数的模块。
+  const secretModules = fs.readdirSync(dist).filter((name) => /^secret-file-[\w-]+\.js$/.test(name) && fs.readFileSync(path.join(dist, name), "utf8").includes("async function writeSecretFileAtomic(params) {"));
+  if (secretModules.length !== 1) throw new Error("无法唯一定位 OpenClaw 凭据写入模块");
+  const secretModule = path.join(dist, secretModules[0]);
+  adaptSecretFiles(fs.readFileSync(secretModule, "utf8"));
   // 子进程启动时就校验兼容性，不能等用户首次聊天才发现模块结构不支持。
   adaptPluginSkills(fs.readFileSync(skillModule, "utf8"));
   registerHooks({
@@ -124,11 +137,12 @@ function install() {
       const result = nextLoad(url, context);
       if (!url.startsWith("file:")) return result;
       const filename = fileURLToPath(url);
+      if (filename === secretModule) return { ...result, source: adaptSecretFiles(String(result.source)) };
       if (filename !== skillModule) return result;
       return { ...result, source: adaptPluginSkills(String(result.source)) };
     },
   });
 }
 
-module.exports = { publishPluginSkills, adaptPluginSkills };
+module.exports = { publishPluginSkills, adaptPluginSkills, adaptSecretFiles };
 install();

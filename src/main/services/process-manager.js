@@ -32,7 +32,10 @@ function captureChildOutput(stream, name) {
       if (!oversized) pending += lines[index];
       if (pending.length > 65536) { pending = ""; oversized = true; }
       if (index < lines.length - 1) {
-        if (!oversized) diagnostics.captureLog(name, pending);
+        if (!oversized) {
+          diagnostics.captureLog(name, pending);
+          if (name === "gateway.log" || name === "gateway.err.log") require("./keepalive").observeGatewayLine(pending);
+        }
         pending = "";
         oversized = false;
       }
@@ -142,6 +145,7 @@ function startChild(name, scriptPath, args, options = {}) {
       OPENCLAW_MODULES_DIR: modulesDir,
       OPENCLAW_NO_AUTO_UPDATE: "1",
       NODE_DISABLE_COMPILE_CACHE: "1",
+      ZGY_PORTABLE_FS: String(require("./fingerprint").getDriveInfo().fileSystem || "").toLowerCase(),
       NODE_PATH: [modulesDir, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
       ...(options.extraEnv || {}),
     },
@@ -269,6 +273,8 @@ async function startGateway() {
     console.error("[gateway] ensure chatCompletions failed:", error.message);
   }
   try { await syncBackendModels(); } catch { /* 后台同步失败不阻塞启动 */ }
+  await require("./keepalive").prepareGatewayAuth();
+  await require("./session-store").preparePortableSessions();
   const child = startChild("gateway", moduleEntryPath(), ["gateway", "--port", String(gatewayPort()), "--verbose"], { runtimeConfig: true });
   gatewayProcess = child;
   const reachable = await waitForPort(gatewayPort(), timing.gateway.startWaitTimeoutMs);

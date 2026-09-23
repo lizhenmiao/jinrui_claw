@@ -7,13 +7,17 @@
 const timing = require("../../shared/timing.json");
 const oauth = require("./oauth");
 const processManager = require("./process-manager");
-const { readConfig, writeConfig, writeSubscriptionProvider } = require("./config-store");
+const { readConfig, writeConfig } = require("./config-store");
 const { devicePing } = require("./backend-client");
 const { appendLogLine } = require("./logs");
 
 let heartbeatTimer = null;
 let tokenTimer = null;
 let unsubscribeRotation = null;
+// 一轮失败只允许一次自动恢复，并发错误共用同一任务，成功聊天后才允许下一轮。
+let recoveryPromise = null;
+let recoveryAttempted = false;
+let preparingGateway = false;
 
 /** 订阅 provider：按 keyMode 判定（不要求已经有 Key，否则丢了 Key 就永远修不回来）。 */
 function subscriptionProvider(config) {
@@ -23,16 +27,25 @@ function subscriptionProvider(config) {
   return entry ? entry[1] : null;
 }
 
+/** 同步所有订阅提供商的访问令牌，保留手动 API Key 与模型配置。 */
+function syncSubscriptionToken(session) {
+  const config = readConfig();
+  let changed = false;
+  for (const provider of Object.values(config.models?.providers || {})) {
+    if (provider?.keyMode !== "server" || provider.apiKey === session.accessToken) continue;
+    provider.apiKey = session.accessToken;
+    changed = true;
+  }
+  if (changed) writeConfig(config);
+  return changed;
+}
+
 /** 令牌轮换后回写 provider：网关在跑就重启一次，否则它仍在用已失效的令牌。 */
 async function applyRotatedToken(session) {
   try {
-    const config = readConfig();
-    const provider = subscriptionProvider(config);
-    if (!provider || provider.apiKey === session.accessToken) return;
-    provider.apiKey = session.accessToken;
-    writeConfig(config);
+    if (!syncSubscriptionToken(session)) return;
     const gatewayRunning = await processManager.isGatewayRunning();
-    if (gatewayRunning) await processManager.restartGateway("oauth-token-refresh");
+    if (gatewayRunning && !preparingGateway && !recoveryPromise) await processManager.restartGateway("oauth-token-refresh");
     appendLogLine("oauth.log", `token rotated; provider key updated; gatewayRestarted=${gatewayRunning}`);
   } catch (error) {
     appendLogLine("oauth.log", `token rotation handling failed: ${error.message}`);
@@ -46,22 +59,34 @@ async function heartbeatOnce() {
   } catch { /* 心跳失败不影响任何本地功能 */ }
 }
 
-/**
- * 订阅 Key 自愈：provider 标着 server 却没有 Key（配置被写坏、换机器带了旧配置）时，用当前登录态重新同步一次，把 Key 补回去；网关在跑则重启读取新 Key。
- */
-async function repairSubscriptionKey() {
+/** 启动网关前确保所有订阅提供商使用当前有效令牌，读盘后同步以避免覆盖并发配置。 */
+async function prepareGatewayAuth() {
+  if (!subscriptionProvider(readConfig())) return;
+  preparingGateway = true;
   try {
-    const config = readConfig();
-    const provider = subscriptionProvider(config);
-    if (!provider || provider.apiKey) return;
-    // 保留用户之前选的模型（默认模型形如 "zgy/deepseek-v4-flash"）。
-    const currentDefault = String(config?.agents?.defaults?.model || "");
-    const preferred = currentDefault.includes("/") ? currentDefault.split("/").pop() : "";
-    const synced = await oauth.subscriptionModelConfig(preferred);
-    writeSubscriptionProvider(synced);
-    appendLogLine("oauth.log", "subscription key repaired from session");
-    if (await processManager.isGatewayRunning()) await processManager.restartGateway("subscription-key-repaired");
-  } catch { /* 未登录或平台不可达：保持原状，下次启动再试 */ }
+    const session = await oauth.ensureSession();
+    syncSubscriptionToken(session);
+  } finally { preparingGateway = false; }
+}
+
+/** 明确的订阅 OAuth 401 才触发恢复；不重放可能已产生副作用的聊天消息。 */
+function observeGatewayLine(line) {
+  if (!/\[model-fetch\] response .*status=200\b|rawError=401.*OAuth.*(?:无效|过期)/.test(line)) return;
+  const providerId = line.match(/\bprovider=([^\s]+)/)?.[1];
+  if (!providerId || readConfig().models?.providers?.[providerId]?.keyMode !== "server") return;
+  if (/\[model-fetch\] response .*status=200\b/.test(line)) { recoveryAttempted = false; return; }
+  if (!/rawError=401.*OAuth.*(?:无效|过期)/.test(line) || recoveryPromise || recoveryAttempted) return;
+  if (!subscriptionProvider(readConfig())) return;
+  recoveryAttempted = true;
+  // 异步串行恢复；同一轮日志的重复报错不能重复消耗刷新令牌。
+  recoveryPromise = Promise.resolve().then(async () => {
+    await oauth.refresh();
+    await prepareGatewayAuth();
+    if (await processManager.isGatewayRunning()) await processManager.restartGateway("oauth-auth-recovery");
+    appendLogLine("gateway.err.log", "订阅令牌已刷新，网关已重新加载，请重新发送刚才的消息。");
+  }).catch((error) => {
+    appendLogLine("gateway.err.log", `订阅授权自动恢复失败：${error.message}。请在客户端重新登录或检查网络。`);
+  }).finally(() => { recoveryPromise = null; });
 }
 
 /** 令牌保活一轮：距过期还早就什么都不做；到点了主动刷新（失败保留登录态等下一轮）。 */
@@ -81,7 +106,7 @@ function start() {
     void heartbeatOnce();
     heartbeatTimer = setInterval(heartbeatOnce, timing.backend.heartbeatIntervalMs);
   }
-  void repairSubscriptionKey();
+  void refreshTokenOnce();
   if (!tokenTimer) tokenTimer = setInterval(refreshTokenOnce, timing.oauth.tokenCheckIntervalMs);
   return true;
 }
@@ -96,4 +121,4 @@ function stop() {
   unsubscribeRotation = null;
 }
 
-module.exports = { start, stop };
+module.exports = { start, stop, prepareGatewayAuth, observeGatewayLine };
