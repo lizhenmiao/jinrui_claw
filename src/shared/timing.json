@@ -41,6 +41,9 @@
   "diagnostics": {
     "probeTimeoutMs": 10000
   },
+  "externalBrowser": {
+    "discoveryTimeoutMs": 5000
+  },
   "fingerprint": {
     "windowsDriveTypeTimeoutMs": 4000,
     "windowsPowerShellTimeoutMs": 6000,

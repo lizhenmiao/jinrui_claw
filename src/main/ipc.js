@@ -3,7 +3,7 @@
  * 渠道：向导/运行页/通道配置/授权/更新/账号。
  * 每个接口对应一个服务函数，返回结构与旧 REST API 保持等价语义。
  */
-const { app, ipcMain, shell, BrowserWindow } = require("electron");
+const { app, ipcMain, BrowserWindow } = require("electron");
 const { getAppConfig, getPublicConfig } = require("./app-config");
 const { readConfig, writeConfig, writeSubscriptionProvider, isConfigured, resetAll } = require("./services/config-store");
 const license = require("./services/license");
@@ -17,6 +17,7 @@ const oauthListener = require("./services/oauth-listener");
 const channels = require("./services/channels");
 const qqLogin = require("./services/qq-login");
 const updater = require("./services/updater");
+const { openBrowser } = require("./services/external-browser");
 const fs = require("fs");
 const path = require("path");
 const { getPaths } = require("./paths");
@@ -43,12 +44,11 @@ async function renderQrSvg(data) {
   // ---- 应用配置 ----
   ipcMain.handle("app:getPublicConfig", () => getPublicConfig());
   ipcMain.handle("app:getGatewayToken", () => readConfig().gateway?.auth?.token || "");
-  ipcMain.handle("app:openExternal", async (_event, rawUrl) => {
-    const value = String(rawUrl || "").trim();
-    const parsed = new URL(value);
-    if (!/^https?:$/.test(parsed.protocol)) throw new Error("只允许打开 HTTP/HTTPS 链接");
-    await shell.openExternal(value);
-    return true;
+  // 网页入口共用浏览器选择逻辑，取消返回 false 供登录与订阅流程恢复按钮。
+  ipcMain.handle("app:openExternal", async (event, rawUrl) => {
+    const result = await openBrowser(rawUrl, BrowserWindow.fromWebContents(event.sender));
+    if (!result.ok && !result.canceled) throw new Error(result.message);
+    return result.ok;
   });
   ipcMain.handle("app:quit", () => {
     const window = BrowserWindow.getAllWindows()[0];
@@ -97,13 +97,14 @@ async function renderQrSvg(data) {
   }));
   // 一次性应用所有待生效的通道配置变更（多个平台的修改攒一次重启）。
   ipcMain.handle("gateway:restart", () => gateway.restartGateway("apply-channel-changes"));
-  ipcMain.handle("gateway:openChat", async () => {
+  // 聊天链接携带本机网关令牌，浏览器打开失败时由主进程弹出选择窗口。
+  ipcMain.handle("gateway:openChat", async (event) => {
     const config = readConfig();
     const token = config.gateway?.auth?.token || "";
     const port = config.gateway?.port || 18789;
     const url = `http://127.0.0.1:${port}/chat?session=main${token ? `#token=${encodeURIComponent(token)}` : ""}`;
-    await shell.openExternal(url);
-    return { ok: true, url };
+    const result = await openBrowser(url, BrowserWindow.fromWebContents(event.sender));
+    return result.ok ? { ...result, url } : result;
   });
   ipcMain.handle("logs:recent", () => readRecentLogs());
   ipcMain.handle("logs:clear", () => {

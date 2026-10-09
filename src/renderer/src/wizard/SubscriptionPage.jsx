@@ -128,9 +128,14 @@ export default function SubscriptionPage({ context }) {
       setOpening(true);
       const origin = String(publicConfig?.oauth?.authorizationOrigin || "").replace(/\/+$/, "");
       const suffix = publicConfig?.subscription?.plansPageSuffix || "coding-plan";
-      await desktopApi.app.openExternal(`${origin}/${suffix}`);
+      const opened = await desktopApi.app.openExternal(`${origin}/${suffix}`);
       if (!alive.current) return;
       setOpening(false);
+      if (!opened) {
+        setPendingKey("");
+        setStatusText("");
+        return;
+      }
       setStatusTone("info");
       setStatusText("已打开订阅页面，请在浏览器中完成订购；客户端每 2 秒自动检查一次，订购成功会直接进入模型选择。");
       stopPolling();

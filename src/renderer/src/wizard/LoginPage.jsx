@@ -48,6 +48,7 @@ export default function LoginPage({ context }) {
     })();
   }, []);
 
+  /** 打开授权页面并等待登录结果，取消浏览器选择时同时结束本次登录。 */
   const startLogin = async () => {
     setPhase("waiting");
     setFallbackUrl("");
@@ -57,11 +58,16 @@ export default function LoginPage({ context }) {
       const result = await desktopApi.account.login();
       let opened = false;
       try {
-        await desktopApi.app.openExternal(result.authorizationUrl);
-        opened = true;
+        opened = await desktopApi.app.openExternal(result.authorizationUrl);
+        if (!opened) {
+          await desktopApi.account.cancelLogin?.().catch(() => {});
+          setPhase("idle");
+          setStatusText("已取消打开登录页面，可重新点击立即登录。");
+          return;
+        }
       } catch { /* 打开失败时展示手动链接 */ }
       setFallbackUrl(result.authorizationUrl);
-      setStatusText(opened ? "登录页面已在默认浏览器打开，请完成授权。" : "浏览器打开失败，请点击下方链接手动打开。");
+      setStatusText(opened ? "登录页面已在浏览器打开，请完成授权。" : "浏览器打开失败，请点击下方链接手动打开。");
       clearInterval(pollTimer.current);
       const deadline = Date.now() + LOGIN_POLL_TIMEOUT_MS;
       pollTimer.current = setInterval(async () => {

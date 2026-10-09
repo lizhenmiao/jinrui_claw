@@ -203,9 +203,11 @@ export default function Runtime() {
     }
   };
 
+  /** 打开聊天页；浏览器选择取消时安静返回，其它失败显示可读提示。 */
   const openChat = async () => {
     try {
-      await desktopApi.gateway.openChat();
+      const result = await desktopApi.gateway.openChat();
+      if (!result.ok && !result.canceled) toast.show(result.message || "暂时无法打开聊天页面，请稍后重试。", "err");
     } catch (error) {
       toast.show(`打开聊天失败：${error.message}`, "err");
     }
@@ -305,7 +307,7 @@ export default function Runtime() {
         <div className="flex gap-[14px]">
           <Button variant="secondary" className="h-[55px] min-w-[150px] rounded-full text-base" onClick={() => setSettingsOpen(true)} disabled={gatewayState !== "running"}>通道设置</Button>
           <Button variant="secondary" className="h-[55px] min-w-[168px] rounded-full text-base" onClick={factoryReset} disabled={gatewayState !== "running"}>恢复出厂设置</Button>
-          <Button className="h-[55px] min-w-[262px] rounded-full border-[#050505] bg-[#050505] text-base" onClick={openChat} disabled={gatewayState !== "running"}>打开聊天窗口</Button>
+          <AsyncButton className="h-[55px] min-w-[262px] rounded-full bg-ink px-6 text-base font-semibold text-card hover:brightness-125" busyText="正在打开..." onClick={openChat} disabled={gatewayState !== "running"}>打开聊天窗口</AsyncButton>
         </div>
       </div>
 

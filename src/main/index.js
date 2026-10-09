@@ -17,6 +17,7 @@ const oauth = require("./services/oauth");
 const oauthListener = require("./services/oauth-listener");
 const keepalive = require("./services/keepalive");
 const diagnostics = require("./services/diagnostics");
+const { openBrowser } = require("./services/external-browser");
 
 // macOS 26 GPU/字体渲染路径存在崩溃问题，仅 darwin 关闭硬件加速。
 if (process.platform === "darwin") {
@@ -311,7 +312,9 @@ function createMainWindow() {
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url) && !url.includes("127.0.0.1") && !url.includes("localhost")) {
-      require("electron").shell.openExternal(url);
+      void openBrowser(url, mainWindow).then((result) => {
+        if (!result.ok && !result.canceled) logLine(result.message);
+      }).catch(() => logLine("网页链接无效，无法打开浏览器"));
       return { action: "deny" };
     }
     return { action: "allow" };
